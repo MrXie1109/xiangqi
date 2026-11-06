@@ -454,25 +454,30 @@ function classifyMate(board,loser,last){
     if(deep&&(last.tx===1||last.tx===7))return {name:'卧槽马',color:'#35d0c0'};
   }
 
-  // 4. 双车错：两辆车都压进对方半场，且逐一拿掉都能让将活命（两辆都必要）
+  // 4. 铁门栓：有车锁在将门（中路第4列），拿掉它将就活
   var rooks=[];
   for(y=0;y<10;y++)for(x=0;x<9;x++){
     p=board[y][x];
     if(p&&p.s===win&&p.t==='R'&&(loser===BLK?(y<=4):(y>=5))) rooks.push({x:x,y:y});
   }
-  if(rooks.length>=2&&lp&&lp.s===win&&lp.t==='R'){
-    var bothNeeded=true;
-    for(i=0;i<rooks.length;i++){
-      if(!probeEscape(board,loser,killAt(rooks[i].x,rooks[i].y))){bothNeeded=false;break;}
-    }
-    if(bothNeeded)return {name:'双车错',color:'#d9e6ff'};
+  for(i=0;i<rooks.length;i++){
+    if(rooks[i].x===4&&attacksSquare(board,win,rooks[i].x,rooks[i].y,k.x,k.y))
+      return {name:'铁门栓',color:'#ffd479'};
   }
 
-  // 5. 铁门栓：车插中路，拿掉它将就活
-  if(lp&&lp.s===win&&lp.t==='R'&&last.tx===4&&
-     (loser===BLK?(last.ty<=4):(last.ty>=5))&&
-     probeEscape(board,loser,killAt(last.tx,last.ty)))
-    return {name:'铁门栓',color:'#ffd479'};
+  // 5. 双车错：两车不共线（一行一纵），各自拿掉都将活命
+  if(rooks.length>=2){
+    var m,n,ra,rb;
+    for(m=0;m<rooks.length;m++){
+      for(n=m+1;n<rooks.length;n++){
+        ra=rooks[m];rb=rooks[n];
+        if(ra.x===rb.x||ra.y===rb.y)continue;
+        if(probeEscape(board,loser,killAt(ra.x,ra.y))&&
+           probeEscape(board,loser,killAt(rb.x,rb.y)))
+          return {name:'双车错',color:'#d9e6ff'};
+      }
+    }
+  }
 
   // 6. 小鬼坐龙庭：兵卒入宫，拿掉它将就活
   if(lp&&lp.s===win&&lp.t==='P'&&inPalace(loser,last.tx,last.ty)&&
