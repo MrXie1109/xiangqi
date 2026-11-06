@@ -91,6 +91,7 @@
     <h1>中国象棋</h1>
     <select id="mode">
       <option value="local">本地双人</option>
+      <option value="ai">人机对弈</option>
       <option value="mqtt" selected>联机</option>
     </select>
   </header>
@@ -495,6 +496,285 @@ function classifyMate(board,loser,last){
   return {name:'绝杀',color:'#ffd479'};
 }
 
+
+/* ---------- 内置 AI ---------- */
+var AI_VAL={K:10000,R:900,N:400,C:450,A:200,B:200,P:100};
+var AI_MATE=100000;
+var AI_DEPTH=8;          // 迭代加深上限，实际由时间截断
+var AI_TIME=1500;        // 每步思考毫秒
+
+// 只反查将是否被攻击，比全盘生成走法快一个量级
+function aiAttacked(board,side){
+  var k=findKing(board,side);
+  if(!k)return true;
+  var x=k.x,y=k.y,opp=(side===RED?BLK:RED);
+  var i,dx,dy,tx,ty,p,screen;
+  var dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  for(i=0;i<4;i++){
+    dx=dirs[i][0];dy=dirs[i][1];tx=x+dx;ty=y+dy;screen=0;
+    while(tx>=0&&tx<9&&ty>=0&&ty<10){
+      p=board[ty][tx];
+      if(p){
+        if(screen===0){
+          if(p.s===opp&&(p.t==='R'||p.t==='K'))return true;
+          screen=1;
+        }else{
+          if(p.s===opp&&p.t==='C')return true;
+          break;
+        }
+      }
+      tx+=dx;ty+=dy;
+    }
+  }
+  dirs=[[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1],[-2,1],[-1,2]];
+  for(i=0;i<8;i++){
+    dx=dirs[i][0];dy=dirs[i][1];tx=x+dx;ty=y+dy;
+    if(tx<0||tx>8||ty<0||ty>9)continue;
+    p=board[ty][tx];
+    if(p&&p.s===opp&&p.t==='N'){
+      var lx=x+(Math.abs(dx)===2?dx/2:0),ly=y+(Math.abs(dy)===2?dy/2:0);
+      if(!board[ly][lx])return true;
+    }
+  }
+  dy=(side===RED?1:-1);
+  dirs=[[0,dy],[-1,0],[1,0]];
+  for(i=0;i<3;i++){
+    tx=x+dirs[i][0];ty=y+dirs[i][1];
+    if(tx<0||tx>8||ty<0||ty>9)continue;
+    p=board[ty][tx];
+    if(p&&p.s===opp&&p.t==='P')return true;
+  }
+  return false;
+}
+
+// 子力 + 位置
+function aiEval(board){
+  var s=0,y,x,p,v,ry,cd;
+  for(y=0;y<10;y++)for(x=0;x<9;x++){
+    p=board[y][x];
+    if(!p)continue;
+    v=AI_VAL[p.t];
+    ry=(p.s===RED?9-y:y);
+    cd=4-Math.abs(x-4);
+    switch(p.t){
+      case 'P': if(ry>=5)v+=30+(ry-5)*16+cd*4; break;
+      case 'N': v+=cd*6+((x===0||x===8)?-18:0)+(ry>=3&&ry<=7?12:0); break;
+      case 'R': v+=cd*4+(ry>=5?14:0); break;
+      case 'C': v+=cd*5+(ry>=4?10:0); break;
+      case 'A': case 'B': v+=(ry<=2?10:0); break;
+    }
+    s+=(p.s===RED?v:-v);
+  }
+  return s;
+}
+
+/* Zobrist 哈希：置换表用 */
+var AI_TIDX={K:0,A:1,B:2,N:3,R:4,C:5,P:6};
+var AI_ZOB=new Int32Array(2*7*90);
+(function(){
+  var seed=20240101,i;
+  for(i=0;i<AI_ZOB.length;i++){
+    seed=(seed*1103515245+12345)&0x7fffffff;
+    AI_ZOB[i]=seed|0;
+  }
+})();
+var AI_ZS=[0x9e3779b9|0,0x85ebca6b|0];
+var AI_ZSX=AI_ZS[0]^AI_ZS[1];
+function aiZi(side,type,pos){ return ((side===RED?0:1)*7+AI_TIDX[type])*90+pos; }
+function aiHash(board,side){
+  var h=(side===RED?AI_ZS[0]:AI_ZS[1]),y,x,p;
+  for(y=0;y<10;y++)for(x=0;x<9;x++){
+    p=board[y][x];
+    if(p)h^=AI_ZOB[aiZi(p.s,p.t,y*9+x)];
+  }
+  return h|0;
+}
+
+var AI_TT=new Map();
+var AI_killer=[], AI_hist=new Int32Array(90*90);
+function aiKiller(p){ if(!AI_killer[p])AI_killer[p]=[-1,-1]; return AI_killer[p]; }
+function aiMKey(m){ return (m.fy*9+m.fx)*90+(m.ty*9+m.tx); }
+
+function aiOrder(board,moves,ply,ttKey){
+  var arr=[],i,m,cap,k,kk,s;
+  for(i=0;i<moves.length;i++){
+    m=moves[i];cap=board[m.ty][m.tx];k=aiMKey(m);s=0;
+    if(ttKey===k)s=1e7;
+    else if(cap)s=1e6+AI_VAL[cap.t]*10-AI_VAL[board[m.fy][m.fx].t];
+    else{
+      kk=aiKiller(ply);
+      if(kk[0]===k)s=9e5;
+      else if(kk[1]===k)s=8e5;
+      else s=AI_hist[k];
+    }
+    arr.push({m:m,s:s,k:k});
+  }
+  arr.sort(function(a,b){return b.s-a.s;});
+  return arr;
+}
+
+function aiQuiesce(board,side,alpha,beta){
+  var stand=(side===RED?aiEval(board):-aiEval(board));
+  if(stand>=beta)return beta;
+  if(stand>alpha)alpha=stand;
+  var ms=genPseudo(board,side),caps=[],i;
+  for(i=0;i<ms.length;i++)if(board[ms[i].ty][ms[i].tx])caps.push(ms[i]);
+  var ord=aiOrder(board,caps,0,-1),cap,sc;
+  for(i=0;i<ord.length;i++){
+    cap=applyMove(board,ord[i].m);
+    if(aiAttacked(board,side)){undoMove(board,ord[i].m,cap);continue;}
+    sc=-aiQuiesce(board,side===RED?BLK:RED,-beta,-alpha);
+    undoMove(board,ord[i].m,cap);
+    if(sc>=beta)return beta;
+    if(sc>alpha)alpha=sc;
+  }
+  return alpha;
+}
+
+function aiNegamax(board,side,depth,alpha,beta,deadline,ply,h){
+  if(Date.now()>deadline)return alpha;
+  var alphaOrig=alpha;
+  var e=AI_TT.get(h), ttKey=-1;
+  if(e){
+    ttKey=e.key;
+    if(e.depth>=depth){
+      if(e.flag===0)return e.score;
+      if(e.flag===1&&e.score<=alpha)return alpha;
+      if(e.flag===2&&e.score>=beta)return beta;
+    }
+  }
+  if(depth<=0)return aiQuiesce(board,side,alpha,beta);
+
+  var opp=(side===RED?BLK:RED);
+
+  // 空着裁剪：先让对手走一步都不至于超界，说明局面足够好
+  if(depth>=3&&!aiAttacked(board,side)){
+    var ns=-aiNegamax(board,opp,depth-3,-beta,-beta+1,deadline,ply+1,h^AI_ZSX);
+    if(ns>=beta)return beta;
+  }
+
+  var moves=aiOrder(board,genPseudo(board,side),ply,ttKey);
+  var any=false,bestMove=null,bestKey=-1;
+  var m,cap,pc,nh,sc,kk;
+  for(var i=0;i<moves.length;i++){
+    var o=moves[i];
+    m=o.m;cap=board[m.ty][m.tx];pc=board[m.fy][m.fx];
+    nh=h^AI_ZOB[aiZi(side,pc.t,m.fy*9+m.fx)]^AI_ZOB[aiZi(side,pc.t,m.ty*9+m.tx)]^AI_ZSX;
+    if(cap)nh^=AI_ZOB[aiZi(opp,cap.t,m.ty*9+m.tx)];
+    applyMove(board,m);
+    if(aiAttacked(board,side)){undoMove(board,m,cap);continue;}
+    any=true;
+    sc=-aiNegamax(board,opp,depth-1,-beta,-alpha,deadline,ply+1,nh);
+    undoMove(board,m,cap);
+    if(sc>=beta){
+      if(!cap){
+        kk=aiKiller(ply);
+        if(kk[0]!==o.k){kk[1]=kk[0];kk[0]=o.k;}
+        AI_hist[o.k]+=depth*depth;
+      }
+      AI_TT.set(h,{depth:depth,score:beta,flag:1,move:m,key:o.k});
+      return beta;
+    }
+    if(sc>alpha){alpha=sc;bestMove=m;bestKey=o.k;}
+  }
+  if(!any)return -AI_MATE+(10-depth);
+  AI_TT.set(h,{depth:depth,score:alpha,flag:(alpha>alphaOrig?0:2),move:bestMove,key:bestKey});
+  return alpha;
+}
+
+// 迭代加深，超时放弃当前层，用上一层的结果
+function aiBestMove(board,side,maxDepth,avoidKeys,timeLimit){
+  var deadline=Date.now()+(timeLimit||AI_TIME);
+  AI_TT.clear(); AI_killer.length=0; AI_hist.fill(0);
+  var best=null,i,d;
+
+  for(d=1;d<=maxDepth;d++){
+    var moves=aiOrder(board,genPseudo(board,side),0,-1);
+    var alpha=-AI_MATE,localBest=null,aborted=false;
+    var scored=[],safe=[];
+    for(i=0;i<moves.length;i++){
+      var o=moves[i],m=o.m,cap=applyMove(board,m);
+      if(aiAttacked(board,side)){undoMove(board,m,cap);continue;}
+      var opp=(side===RED?BLK:RED);
+      var nh=aiHash(board,side)^AI_ZSX;
+      var rep=false;
+      if(avoidKeys&&avoidKeys.length){
+        var k2=aiHash(board,opp);
+        if(avoidKeys.indexOf(k2)>=0)rep=true;
+      }
+      var sc=-aiNegamax(board,opp,d-1,-AI_MATE,-alpha,deadline,1,nh);
+      undoMove(board,m,cap);
+      if(sc>alpha){alpha=sc;localBest=m;}
+      var item={m:m,sc:sc};
+      scored.push(item);
+      if(!rep)safe.push(item);
+      if(Date.now()>deadline){aborted=true;break;}
+    }
+    if(localBest&&!aborted){
+      var use=safe.length?safe:scored;
+      use.sort(function(a,b){return b.sc-a.sc;});
+      var top=use[0].sc,pool=[];
+      for(i=0;i<use.length&&i<6;i++)if(use[i].sc>=top-25)pool.push(use[i].m);
+      best=pool[Math.floor(Math.random()*pool.length)]||use[0].m;
+    }
+    if(aborted)break;
+  }
+  return best;
+}
+
+/* ---------- 重复局面与长打裁决 ---------- */
+// 局面标识：盘面 + 轮走方
+function posKey(board,side){
+  return toFen(board,side);
+}
+
+// 是否构成"捉"：走动后存在得子的吃子威胁（无根子，或小换大）
+// 规则24.11：捉指走子后能得子，且得子后不致立即被将死
+function detectChase(board,side){
+  var opp=(side===RED?BLK:RED);
+  var myL=legalMoves(board,side);
+  if(!myL.length)return false;
+  var opG=guardTargets(board,opp);
+  var i,m,p,q,v,a;
+  for(i=0;i<myL.length;i++){
+    m=myL[i];
+    q=board[m.ty][m.tx];
+    if(!q||q.s!==opp)continue;
+    if(q.t==='K'||q.t==='P')continue;          // 捉将不算、捉兵通常不算得子
+    v=pieceVal(q,m.ty);
+    p=board[m.fy][m.fx];
+    a=pieceVal(p,m.fy);
+    if(!opG[m.ty*9+m.tx]||a<v)return true;     // 白吃，或小换大
+  }
+  return false;
+}
+
+// 三次重复时裁决：一方全程"打"则该方负，双方都打或都不打判和
+function repetitionVerdict(hist){
+  if(hist.length<5)return null;
+  var last=hist[hist.length-1].key;
+  var idx=-1,i,n=0;
+  for(i=0;i<hist.length;i++){
+    if(hist[i].key===last){n++;if(idx<0&&n>=1)idx=i;}
+  }
+  if(n<3)return null;
+
+  // 取最近一段循环：从第一次出现到当前
+  var seg=hist.slice(idx);
+  var redAttack=false,blkAttack=false,redIdle=false,blkIdle=false;
+  for(i=0;i<seg.length;i++){
+    var e=seg[i];
+    if(e.by===RED){
+      if(e.check||e.chase)redAttack=true; else redIdle=true;
+    }else{
+      if(e.check||e.chase)blkAttack=true; else blkIdle=true;
+    }
+  }
+  if(redAttack&&!blkAttack)return {result:'红方长打，黑方胜',loser:RED,name:'长打判负'};
+  if(blkAttack&&!redAttack)return {result:'黑方长打，红方胜',loser:BLK,name:'长打判负'};
+  return {result:'三次重复，和棋',loser:null,name:'循环和棋'};
+}
+
 // ==ENGINE_END==
 
 /* ============================ MQTT ============================ */
@@ -627,7 +907,7 @@ var el=function(id){return document.getElementById(id);};
 var canvas=el('board'), ctx=canvas.getContext('2d');
 
 var BROKER='wss://broker.emqx.io:8084/mqtt';
-var G={board:parseFen(START_FEN).board,turn:RED,moves:[],last:null,over:false,result:'',green:[],red:[],warn:[],inCheck:false};
+var G={board:parseFen(START_FEN).board,turn:RED,moves:[],last:null,over:false,result:'',green:[],red:[],warn:[],inCheck:false,hist:[]};
 var mode='mqtt', mySide=null, room='', link=null, linkState='', peerOnline=false, peerConflict=false;
 var mySid='s'+Math.random().toString(36).slice(2,10);
 var sel=null, hints=[], flip=false;
@@ -1044,6 +1324,7 @@ function computeMarkers(){
 function onPoint(x,y){
   if(G.over)return;
   if(mode==='mqtt'&&G.turn!==mySide)return;
+  if(mode==='ai'&&G.turn===aiSide)return;
 
   var p=G.board[y][x];
   if(sel){
@@ -1092,13 +1373,24 @@ function commitMove(m,opts){
   log((side===RED?'红':'黑')+' '+NAME[side][p.t]+' '+moveToCode(m)+(cap?(' 吃'+NAME[cap.s][cap.t]):''));
 
   var opp=G.turn;
-  var chk=false, kp=null, cls=null;
+  var chk=isChecked(G.board,opp);
+  G.hist.push({key:posKey(G.board,G.turn),by:side,check:chk,chase:detectChase(G.board,side)});
+
+  var kp=null, cls=null;
   if(legalMoves(G.board,opp).length===0){
     G.over=true;
-    chk=isChecked(G.board,opp);
     G.result=(side===RED?'红方胜':'黑方胜')+(chk?'（将死）':'（困毙）');
     kp=findKing(G.board,opp);
     cls=chk?classifyMate(G.board,opp,m):{name:'困毙',color:'#9aa0a6'};
+  }
+
+  if(!G.over){
+    var rv=repetitionVerdict(G.hist);
+    if(rv){
+      G.over=true;G.result=rv.result;
+      log(rv.result);
+      setTimeout(function(){showBanner(rv.name,'#ffb020');},260);
+    }
   }
 
   playMoveAnim(m,cap,function(){
@@ -1126,6 +1418,7 @@ function commitMove(m,opts){
   sel=null;hints=[];
   computeMarkers();updateStatus();
   if(opts.broadcast!==false)sendState();
+  if(mode==='ai'&&!G.over&&G.turn===aiSide)scheduleAI();
   return true;
 }
 
@@ -1326,7 +1619,7 @@ function disconnect(){
 }
 
 /* ---------- 界面 ---------- */
-var pendingReq=null, askYes=null, askNo=null;
+var pendingReq=null, askYes=null, askNo=null, aiSide=null, aiTimer=null;
 
 function log(s){
   var box=el('log');
@@ -1338,6 +1631,7 @@ function updateStatus(){
   var t;
   if(G.over) t=G.result;
   else if(mode==='local') t=(G.turn===RED?'红方':'黑方')+'走棋';
+  else if(mode==='ai') t=(G.turn===aiSide?'电脑思考中':(G.turn===RED?'红方':'黑方')+'走棋');
   else if(peerConflict) t='双方选了同一边';
   else if(linkState==='connecting') t='连接中';
   else if(linkState!=='online') t='未连接';
@@ -1358,13 +1652,27 @@ function updateStatus(){
 function setMode(m){
   mode=m;
   disconnect();
+  if(aiTimer){clearTimeout(aiTimer);aiTimer=null;}
+  aiSide=(m==='ai')?BLK:null;
   mySide=null;peerConflict=false;flip=false;
   document.querySelectorAll('.sideBtn').forEach(function(b){b.classList.remove('on');});
   el('netRow').style.display=(m==='mqtt')?'flex':'none';
   el('actLocal').style.display=(m==='mqtt')?'none':'flex';
   el('actOnline').style.display=(m==='mqtt')?'flex':'none';
   hideAsk();
-  layout();updateStatus();
+  layout();
+  resetGame();
+  updateStatus();
+}
+
+function scheduleAI(){
+  if(aiTimer)clearTimeout(aiTimer);
+  aiTimer=setTimeout(function(){
+    aiTimer=null;
+    if(mode!=='ai'||G.over||G.turn!==aiSide)return;
+    var m=aiBestMove(G.board,G.turn,AI_DEPTH,G.hist.map(function(e){return e.key;}),AI_TIME);
+    if(m)commitMove(m);
+  },160);
 }
 
 function randRoom(){
@@ -1377,7 +1685,7 @@ function resetGame(){
   G.board=parseFen(START_FEN).board;
   G.turn=RED;G.moves=[];G.last=null;G.over=false;G.result='';
   G.green=[];G.red=[];G.warn=[];G.inCheck=false;
-  sel=null;hints=[];anim=null;fx=[];shakeUntil=0;
+  sel=null;hints=[];anim=null;fx=[];shakeUntil=0;G.hist=[];
   el('log').textContent='';
   hideAsk();
   computeMarkers();updateStatus();
@@ -1394,11 +1702,27 @@ function pickSide(side){
   layout();updateStatus();
 }
 
+/* 从棋谱重建每步性质（悔棋、追平后用） */
+function rebuildHist(){
+  G.hist=[];
+  var b=parseFen(START_FEN).board, turn=RED, i, m, side;
+  for(i=0;i<G.moves.length;i++){
+    m=codeToMove(G.moves[i]);
+    if(!m)break;
+    side=turn;
+    applyMove(b,m);
+    turn=(turn===RED?BLK:RED);
+    G.hist.push({key:toFen(b,turn),by:side,
+                 check:isChecked(b,turn),chase:detectChase(b,side)});
+  }
+}
+
 /* 把棋谱截断到指定长度并重放 */
 function applyUndoList(list){
   var r=replay(list);
   if(!r.ok)return;
   G.board=r.board;G.turn=r.turn;G.moves=list.slice();
+  rebuildHist();
   G.last=list.length?codeToMove(list[list.length-1]):null;
   G.over=false;G.result='';
   sel=null;hints=[];anim=null;
@@ -1454,8 +1778,14 @@ el('askNo').addEventListener('click',function(){var f=askNo;hideAsk();if(f)f();}
 /* 本地双人 */
 el('btnNew').addEventListener('click',function(){resetGame();});
 el('btnUndo').addEventListener('click',function(){
-  if(G.over||!G.moves.length)return;
-  applyUndo(G.moves.length-1);
+  if(!G.moves.length)return;
+  var n=1;
+  if(mode==='ai'){
+    if(aiTimer){clearTimeout(aiTimer);aiTimer=null;n=1;}
+    else if(G.moves.length>=2)n=2;
+  }
+  if(G.over)n=Math.min(n,G.moves.length)||1;
+  applyUndo(G.moves.length-n);
 });
 el('btnCopy').addEventListener('click',function(){
   var t=G.moves.join(' ');
