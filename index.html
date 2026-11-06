@@ -501,7 +501,7 @@ function classifyMate(board,loser,last){
 var AI_VAL={K:10000,R:900,N:400,C:450,A:200,B:200,P:100};
 var AI_MATE=100000;
 var AI_DEPTH=8;          // 迭代加深上限，实际由时间截断
-var AI_TIME=1500;        // 每步思考毫秒
+var AI_TIME=2500;        // 每步思考毫秒
 
 // 只反查将是否被攻击，比全盘生成走法快一个量级
 function aiAttacked(board,side){
@@ -591,6 +591,7 @@ function aiHash(board,side){
 }
 
 var AI_TT=new Map();
+var AI_ABORT=false;   // 超时标记：置位后所有在途结果作废
 var AI_killer=[], AI_hist=new Int32Array(90*90);
 function aiKiller(p){ if(!AI_killer[p])AI_killer[p]=[-1,-1]; return AI_killer[p]; }
 function aiMKey(m){ return (m.fy*9+m.fx)*90+(m.ty*9+m.tx); }
@@ -614,11 +615,17 @@ function aiOrder(board,moves,ply,ttKey){
 }
 
 function aiQuiesce(board,side,alpha,beta){
-  var stand=(side===RED?aiEval(board):-aiEval(board));
-  if(stand>=beta)return beta;
-  if(stand>alpha)alpha=stand;
+  if(AI_ABORT)return alpha;
+  var inCheck=aiAttacked(board,side);
+  if(!inCheck){
+    var stand=(side===RED?aiEval(board):-aiEval(board));
+    if(stand>=beta)return beta;
+    if(stand>alpha)alpha=stand;
+  }
   var ms=genPseudo(board,side),caps=[],i;
-  for(i=0;i<ms.length;i++)if(board[ms[i].ty][ms[i].tx])caps.push(ms[i]);
+  for(i=0;i<ms.length;i++){
+    if(inCheck||board[ms[i].ty][ms[i].tx])caps.push(ms[i]);
+  }
   var ord=aiOrder(board,caps,0,-1),cap,sc;
   for(i=0;i<ord.length;i++){
     cap=applyMove(board,ord[i].m);
@@ -632,7 +639,8 @@ function aiQuiesce(board,side,alpha,beta){
 }
 
 function aiNegamax(board,side,depth,alpha,beta,deadline,ply,h){
-  if(Date.now()>deadline)return alpha;
+  if(AI_ABORT)return 0;
+  if(Date.now()>deadline){AI_ABORT=true;return 0;}
   var alphaOrig=alpha;
   var e=AI_TT.get(h), ttKey=-1;
   if(e){
@@ -664,7 +672,9 @@ function aiNegamax(board,side,depth,alpha,beta,deadline,ply,h){
     applyMove(board,m);
     if(aiAttacked(board,side)){undoMove(board,m,cap);continue;}
     any=true;
-    sc=-aiNegamax(board,opp,depth-1,-beta,-alpha,deadline,ply+1,nh);
+    // 将军延伸：走到将军不减少深度，战术看得更远
+    var ext=aiAttacked(board,opp)?1:0;
+    sc=-aiNegamax(board,opp,depth-1+ext,-beta,-alpha,deadline,ply+1,nh);
     undoMove(board,m,cap);
     if(sc>=beta){
       if(!cap){
@@ -686,6 +696,7 @@ function aiNegamax(board,side,depth,alpha,beta,deadline,ply,h){
 function aiBestMove(board,side,maxDepth,avoidKeys,timeLimit){
   var deadline=Date.now()+(timeLimit||AI_TIME);
   AI_TT.clear(); AI_killer.length=0; AI_hist.fill(0);
+  AI_ABORT=false;
   var best=null,i,d;
 
   for(d=1;d<=maxDepth;d++){
@@ -704,6 +715,7 @@ function aiBestMove(board,side,maxDepth,avoidKeys,timeLimit){
       }
       var sc=-aiNegamax(board,opp,d-1,-AI_MATE,-alpha,deadline,1,nh);
       undoMove(board,m,cap);
+      if(AI_ABORT){aborted=true;break;}   // 半截结果作废，别拿来当分数
       if(sc>alpha){alpha=sc;localBest=m;}
       var item={m:m,sc:sc};
       scored.push(item);
@@ -1413,12 +1425,12 @@ function commitMove(m,opts){
         shakeUntil=performance.now()+420;
       },cap?260:0);
     }
+    if(mode==='ai'&&!G.over&&G.turn===aiSide)scheduleAI();
   });
 
   sel=null;hints=[];
   computeMarkers();updateStatus();
   if(opts.broadcast!==false)sendState();
-  if(mode==='ai'&&!G.over&&G.turn===aiSide)scheduleAI();
   return true;
 }
 
@@ -1665,14 +1677,98 @@ function setMode(m){
   updateStatus();
 }
 
+// 开局库：前几手走正谱，避免一上来就乱走；每条都要校验合法性
+function aiBookMove(){
+  var mv=G.moves, pick=function(a){return a[Math.floor(Math.random()*a.length)];};
+  var code=null;
+  if(mv.length===0)code=pick(['h2e2','b2e2','h2e2','c3c4']);
+  else if(mv.length===1)code=pick(['h9g7','b9c7','h7e7']);
+  else if(mv.length===2){
+    if(mv[0]==='c3c4')code=pick(['h7e7','g6g5']);
+    else code=pick(['h0g2','b0c2']);
+  }
+  else if(mv.length===3)code=pick(['i9h9','b9c7','h9g7']);
+  else if(mv.length===4)code=pick(['i0h0','a0b0']);
+  else if(mv.length===5)code=pick(['b9c7','h9g7','h7e7']);
+  if(!code)return null;
+
+  var m=codeToMove(code);
+  if(!m)return null;
+  var lm=legalMoves(G.board,G.turn),i;
+  for(i=0;i<lm.length;i++){
+    if(lm[i].fx===m.fx&&lm[i].fy===m.fy&&lm[i].tx===m.tx&&lm[i].ty===m.ty)return m;
+  }
+  return null;   // 谱招不适用当前局面，交给搜索
+}
+
+/* AI 放到 Worker 里算，主线程不被冻结，动画和特效照常播 */
+var aiWorker=null, aiThinking=false, aiFallback=false;
+
+function aiWorkerSource(){
+  var fns=[inBoard,inPalace,emptyBoard,parseFen,genPseudo,applyMove,undoMove,findKing,
+           aiAttacked,aiEval,aiZi,aiHash,aiKiller,aiMKey,aiOrder,aiQuiesce,aiNegamax,aiBestMove];
+  var head=
+    'var RED="r",BLK="b";'+
+    'var AI_VAL='+JSON.stringify(AI_VAL)+';'+
+    'var AI_MATE='+AI_MATE+';'+
+    'var AI_TIDX='+JSON.stringify(AI_TIDX)+';'+
+    'var AI_ZOB=new Int32Array(2*7*90);'+
+    '(function(){var s=20240101,i;for(i=0;i<AI_ZOB.length;i++){s=(s*1103515245+12345)&0x7fffffff;AI_ZOB[i]=s|0;}})();'+
+    'var AI_ZS=['+AI_ZS[0]+','+AI_ZS[1]+'];var AI_ZSX=AI_ZS[0]^AI_ZS[1];'+
+    'var AI_TT=new Map();var AI_killer=[];var AI_hist=new Int32Array(8100);var AI_ABORT=false;';
+  var tail=
+    'onmessage=function(e){'+
+      'var d=e.data;'+
+      'var b=parseFen(d.fen).board;'+
+      'var avoid=[];'+
+      'for(var i=0;i<(d.avoid||[]).length;i++){var st=parseFen(d.avoid[i]);avoid.push(aiHash(st.board,st.turn));}'+
+      'var m=aiBestMove(b,d.side,d.depth,avoid,d.time);'+
+      'postMessage({move:m});'+
+    '};';
+  return head+'\n'+fns.map(function(f){return f.toString();}).join('\n')+'\n'+tail;
+}
+
+function getAIWorker(){
+  if(aiWorker)return aiWorker;
+  var src=aiWorkerSource();
+  var blob=new Blob([src],{type:'text/javascript'});
+  aiWorker=new Worker(URL.createObjectURL(blob));
+  aiWorker.onmessage=function(e){
+    aiThinking=false;
+    var mv=e.data&&e.data.move;
+    if(mode==='ai'&&!G.over&&G.turn===aiSide&&mv)commitMove(mv);
+  };
+  aiWorker.onerror=function(){ aiFallback=true; aiThinking=false; };
+  return aiWorker;
+}
+
 function scheduleAI(){
   if(aiTimer)clearTimeout(aiTimer);
   aiTimer=setTimeout(function(){
     aiTimer=null;
     if(mode!=='ai'||G.over||G.turn!==aiSide)return;
-    var m=aiBestMove(G.board,G.turn,AI_DEPTH,G.hist.map(function(e){return e.key;}),AI_TIME);
-    if(m)commitMove(m);
-  },160);
+    if(anim||fx.length){ scheduleAI(); return; }   // 等滑行和爆散播完
+
+    var book=aiBookMove();
+    if(book){ commitMove(book); return; }
+
+    if(aiThinking)return;
+    try{
+      aiThinking=true;
+      getAIWorker().postMessage({
+        fen:toFen(G.board,G.turn),
+        side:G.turn,
+        depth:AI_DEPTH,
+        time:AI_TIME,
+        avoid:G.hist.map(function(e){return e.key;})
+      });
+    }catch(err){
+      // 环境不支持 Worker（少数 file:// 场景）时退回同步搜索
+      aiThinking=false;
+      var m=aiBestMove(G.board,G.turn,AI_DEPTH,G.hist.map(function(e){return e.key;}),Math.min(AI_TIME,1200));
+      if(m)commitMove(m);
+    }
+  },60);
 }
 
 function randRoom(){
