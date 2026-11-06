@@ -1,0 +1,1503 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#1b1a17">
+<title>中国象棋 · 无服务器联机</title>
+<style>
+  :root{--bg:#171613;--fg:#e8e2d4;--acc:#c8a05a;--panel:#26241f;--line:#3a3730}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+  body{display:flex;justify-content:center;padding:10px 0 28px}
+  #app{width:100%;max-width:560px;padding:0 10px}
+  h1{font-size:15px;margin:2px 0 10px;color:var(--acc);font-weight:600;letter-spacing:2px}
+  .row{display:flex;gap:8px;align-items:center;margin:6px 0;flex-wrap:wrap}
+  select,input,button{font:inherit;color:var(--fg);background:var(--panel);
+    border:1px solid var(--line);border-radius:9px;padding:8px 10px;outline:none}
+  select,input{flex:1;min-width:90px}
+  input{font-family:ui-monospace,Menlo,monospace}
+  button{cursor:pointer;background:#33302a;transition:transform .12s,background .12s}
+  button:active{transform:scale(.97)}
+  button.on{background:var(--acc);color:#171613;border-color:var(--acc);font-weight:700}
+  #stat{display:flex;align-items:center;gap:7px;font-size:13px;color:#c9c2b3;
+    background:#141310;border:1px solid #26241f;border-radius:9px;padding:7px 10px;margin:8px 0}
+  .dot{width:8px;height:8px;border-radius:50%;background:#7a3b2f;flex:0 0 auto}
+  .dot.ok{background:#4f9d69;box-shadow:0 0 6px #4f9d69}
+  #boardWrap{display:flex;justify-content:center;margin:10px 0 8px;position:relative}
+  #flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;
+    border-radius:12px;z-index:7}
+  #flash.on{animation:flashout .55s ease-out forwards}
+  @keyframes flashout{0%{opacity:.9}100%{opacity:0}}
+  .bigtext{position:absolute;transform:translate(-50%,-50%);opacity:0;
+    font-weight:900;letter-spacing:.06em;pointer-events:none;white-space:nowrap;
+    z-index:6;will-change:transform,opacity;
+    animation-name:bigpop;animation-fill-mode:forwards;
+    animation-timing-function:cubic-bezier(.2,1.8,.35,1)}
+  .bigtext.eat{animation-name:eatpop}
+  @keyframes bigpop{
+    0%{transform:translate(-50%,-50%) scale(.25) rotate(-10deg);opacity:0;filter:blur(12px)}
+    24%{transform:translate(-50%,-50%) scale(1.24) rotate(3deg);opacity:1;filter:blur(0)}
+    42%{transform:translate(-50%,-50%) scale(.97) rotate(-1deg)}
+    64%{transform:translate(-50%,-50%) scale(1.02) rotate(0);opacity:1}
+    100%{transform:translate(-50%,-118%) scale(.9);opacity:0}
+  }
+  @keyframes eatpop{
+    0%{transform:translate(-50%,-50%) scale(.2);opacity:0;filter:blur(8px)}
+    18%{transform:translate(-50%,-62%) scale(1.3);opacity:1;filter:blur(0)}
+    38%{transform:translate(-50%,-58%) scale(1)}
+    100%{transform:translate(-50%,-150%) scale(.8);opacity:0}
+  }
+  #banner{position:absolute;inset:0;display:none;flex-direction:column;
+    align-items:center;justify-content:center;pointer-events:none;text-align:center}
+  #banner.on{display:flex}
+  #banner .t{font-size:42px;font-weight:900;letter-spacing:8px;
+    animation:pop .55s cubic-bezier(.2,1.7,.4,1) both;text-indent:8px}
+  #banner .s{margin-top:6px;font-size:13px;letter-spacing:3px;opacity:.9;
+    animation:fadein .5s .28s ease both}
+  @keyframes pop{from{transform:scale(.25) rotate(-6deg);opacity:0;filter:blur(8px)}
+                 to{transform:scale(1) rotate(0);opacity:1;filter:blur(0)}}
+  @keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:.9;transform:none}}
+  canvas{border-radius:10px;box-shadow:0 8px 26px rgba(0,0,0,.55);touch-action:manipulation;display:block}
+  header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 12px}
+  header h1{font-size:16px;margin:0;color:var(--acc);font-weight:600;letter-spacing:4px}
+  header select{flex:0 0 auto;width:auto;padding:6px 10px}
+  .bar{display:flex;gap:6px;align-items:center;margin:6px 0}
+  .bar input{flex:1;min-width:80px}
+  .bar .ghost{padding:8px 12px;color:#8b8579}
+  .actions{display:flex;gap:8px;margin:8px 0 4px}
+  .actions button{flex:1}
+  #actOnline{display:none}
+  #ask{display:none;align-items:center;gap:8px;background:#2a2620;
+    border:1px solid #4a3f2a;border-radius:9px;padding:8px 10px;margin:6px 0}
+  #ask.show{display:flex}
+  #ask span{flex:1;font-size:13px;color:#ddd6c7}
+  #ask button{flex:0 0 auto;padding:6px 14px}
+  #legend{font-size:12px;color:#8b8579;margin:2px 0 6px;display:flex;align-items:center;gap:2px}
+  #legend .lg{width:9px;height:9px;border-radius:50%;display:inline-block;margin:0 5px 0 10px}
+  #legend .lg.g{background:#2bd66a;box-shadow:0 0 6px #2bd66a}
+  #legend .lg.y{background:#ffc53d;box-shadow:0 0 6px #ffc53d}
+  #legend .lg.r{background:#ff4d4d;box-shadow:0 0 6px #ff4d4d}
+  #legend .lg.none{background:#5a564d}
+  #log{height:84px;overflow:auto;font-size:12px;color:#9d968a;background:#141310;
+    border-radius:9px;padding:6px 9px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap}
+  .tip{font-size:12px;color:#807a6e;margin:4px 0 0}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>中国象棋</h1>
+    <select id="mode">
+      <option value="local">本地双人</option>
+      <option value="mqtt" selected>联机</option>
+    </select>
+  </header>
+
+  <div class="bar" id="netRow">
+    <input id="room" placeholder="房间号" maxlength="24" autocomplete="off" spellcheck="false">
+    <button id="btnRand" class="ghost" title="换一个房间号">换</button>
+    <button id="btnRed" class="sideBtn">执红</button>
+    <button id="btnBlack" class="sideBtn">执黑</button>
+  </div>
+
+  <div id="stat"><span class="dot" id="dot"></span><span id="statText"></span></div>
+
+  <div id="boardWrap">
+    <canvas id="board"></canvas>
+    <div id="flash"></div>
+    <div id="banner"><div class="t"></div></div>
+  </div>
+
+  <div id="ask">
+    <span id="askText"></span>
+    <button id="askYes" class="primary">同意</button>
+    <button id="askNo">拒绝</button>
+  </div>
+
+  <div class="actions" id="actLocal">
+    <button id="btnNew">重开</button>
+    <button id="btnUndo">悔棋</button>
+    <button id="btnCopy">复制棋谱</button>
+  </div>
+  <div class="actions" id="actOnline">
+    <button id="btnResign">认输</button>
+    <button id="btnDraw">求和</button>
+    <button id="btnUndoReq">悔棋</button>
+  </div>
+
+  <div id="legend"><i class="lg g"></i>可吃<i class="lg y"></i>假根<i class="lg r"></i>危险</div>
+
+  <div id="log"></div>
+</div>
+
+<script>
+/* ============================ 引擎 ============================ */
+// ==ENGINE_START==
+var RED='r', BLK='b';
+var START_FEN='rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w';
+var NAME={r:{K:'帅',A:'仕',B:'相',N:'马',R:'车',C:'炮',P:'兵'},
+          b:{K:'将',A:'士',B:'象',N:'马',R:'车',C:'炮',P:'卒'}};
+
+function emptyBoard(){var b=[];for(var y=0;y<10;y++)b.push([null,null,null,null,null,null,null,null,null]);return b;}
+function inBoard(x,y){return x>=0&&x<9&&y>=0&&y<10;}
+
+function parseFen(fen){
+  var parts=String(fen).trim().split(/\s+/);
+  var rows=parts[0].split('/');
+  var board=emptyBoard();
+  for(var y=0;y<10;y++){
+    var x=0, row=rows[y]||'';
+    for(var i=0;i<row.length;i++){
+      var ch=row[i];
+      if(ch>='1'&&ch<='9'){x+=ch.charCodeAt(0)-48;continue;}
+      if(!/[a-zA-Z]/.test(ch)){x++;continue;}
+      var up=ch.toUpperCase();
+      board[y][x]={s:(ch===up?RED:BLK),t:up};
+      x++;
+    }
+  }
+  return {board:board,turn:(parts[1]==='b'?BLK:RED)};
+}
+
+function toFen(board,turn){
+  var rows=[];
+  for(var y=0;y<10;y++){
+    var s='',e=0;
+    for(var x=0;x<9;x++){
+      var p=board[y][x];
+      if(!p){e++;continue;}
+      if(e){s+=e;e=0;}
+      s+=(p.s===RED?p.t:p.t.toLowerCase());
+    }
+    if(e)s+=e;
+    rows.push(s);
+  }
+  return rows.join('/')+' '+(turn===RED?'w':'b');
+}
+
+function inPalace(side,x,y){
+  if(x<3||x>5)return false;
+  return side===RED?(y>=7&&y<=9):(y>=0&&y<=2);
+}
+
+function genPseudo(board,side,includeOwn){
+  var out=[];
+  for(var y=0;y<10;y++){
+    for(var x=0;x<9;x++){
+      var p=board[y][x];
+      if(!p||p.s!==side)continue;
+      (function(x,y,p){
+        function push(tx,ty){
+          if(!inBoard(tx,ty))return;
+          var q=board[ty][tx];
+          if(q&&q.s===side&&!includeOwn)return;
+          out.push({fx:x,fy:y,tx:tx,ty:ty});
+        }
+        var dirs,i,dx,dy,tx,ty;
+        switch(p.t){
+          case 'K':
+            dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+            for(i=0;i<4;i++){dx=dirs[i][0];dy=dirs[i][1];
+              if(inPalace(side,x+dx,y+dy))push(x+dx,y+dy);}
+            break;
+          case 'A':
+            dirs=[[1,1],[1,-1],[-1,1],[-1,-1]];
+            for(i=0;i<4;i++){dx=dirs[i][0];dy=dirs[i][1];
+              if(inPalace(side,x+dx,y+dy))push(x+dx,y+dy);}
+            break;
+          case 'B':
+            dirs=[[2,2],[2,-2],[-2,2],[-2,-2]];
+            for(i=0;i<4;i++){
+              dx=dirs[i][0];dy=dirs[i][1];
+              tx=x+dx;ty=y+dy;
+              if(!inBoard(tx,ty))continue;
+              if(side===RED&&ty<5)continue;
+              if(side===BLK&&ty>4)continue;
+              if(board[y+dy/2][x+dx/2])continue;
+              push(tx,ty);
+            }
+            break;
+          case 'N':
+            dirs=[[1,2],[2,1],[2,-1],[1,-2],[-1,-2],[-2,-1],[-2,1],[-1,2]];
+            for(i=0;i<8;i++){
+              dx=dirs[i][0];dy=dirs[i][1];
+              tx=x+dx;ty=y+dy;
+              if(!inBoard(tx,ty))continue;
+              var lx=x+(Math.abs(dx)===2?dx/2:0);
+              var ly=y+(Math.abs(dy)===2?dy/2:0);
+              if(board[ly][lx])continue;
+              push(tx,ty);
+            }
+            break;
+          case 'R':
+            dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+            for(i=0;i<4;i++){
+              dx=dirs[i][0];dy=dirs[i][1];tx=x+dx;ty=y+dy;
+              while(inBoard(tx,ty)){
+                var q=board[ty][tx];
+                if(q){if(includeOwn||q.s!==side)out.push({fx:x,fy:y,tx:tx,ty:ty});break;}
+                out.push({fx:x,fy:y,tx:tx,ty:ty});
+                tx+=dx;ty+=dy;
+              }
+            }
+            break;
+          case 'C':
+            dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+            for(i=0;i<4;i++){
+              dx=dirs[i][0];dy=dirs[i][1];tx=x+dx;ty=y+dy;
+              var jumped=false;
+              while(inBoard(tx,ty)){
+                var q=board[ty][tx];
+                if(!jumped){
+                  if(q){jumped=true;}
+                  else out.push({fx:x,fy:y,tx:tx,ty:ty});
+                }else{
+                  if(q){if(includeOwn||q.s!==side)out.push({fx:x,fy:y,tx:tx,ty:ty});break;}
+                }
+                tx+=dx;ty+=dy;
+              }
+            }
+            break;
+          case 'P':
+            push(x, y+(side===RED?-1:1));
+            if(side===RED?y<=4:y>=5){push(x-1,y);push(x+1,y);}
+            break;
+        }
+      })(x,y,p);
+    }
+  }
+  return out;
+}
+
+function findKing(board,side){
+  for(var y=0;y<10;y++)for(var x=0;x<9;x++){
+    var p=board[y][x];
+    if(p&&p.t==='K'&&p.s===side)return {x:x,y:y};
+  }
+  return null;
+}
+
+function kingsFace(board){
+  var rk=findKing(board,RED), bk=findKing(board,BLK);
+  if(!rk||!bk||rk.x!==bk.x)return false;
+  var x=rk.x, a=Math.min(rk.y,bk.y), b=Math.max(rk.y,bk.y);
+  for(var y=a+1;y<b;y++) if(board[y][x]) return false;
+  return true;
+}
+
+function isChecked(board,side){
+  var k=findKing(board,side);
+  if(!k)return true;
+  if(kingsFace(board))return true;
+  var ms=genPseudo(board, side===RED?BLK:RED);
+  for(var i=0;i<ms.length;i++) if(ms[i].tx===k.x&&ms[i].ty===k.y) return true;
+  return false;
+}
+
+function applyMove(board,m){
+  var cap=board[m.ty][m.tx];
+  board[m.ty][m.tx]=board[m.fy][m.fx];
+  board[m.fy][m.fx]=null;
+  return cap;
+}
+function undoMove(board,m,cap){
+  board[m.fy][m.fx]=board[m.ty][m.tx];
+  board[m.ty][m.tx]=cap||null;
+}
+
+function legalMoves(board,side){
+  var ps=genPseudo(board,side), out=[];
+  for(var i=0;i<ps.length;i++){
+    var m=ps[i];
+    var cap=applyMove(board,m);
+    var bad=isChecked(board,side);
+    undoMove(board,m,cap);
+    if(!bad)out.push(m);
+  }
+  return out;
+}
+
+function moveToCode(m){return fileChar(m.fx)+rankChar(m.fy)+fileChar(m.tx)+rankChar(m.ty);}
+function fileChar(x){return String.fromCharCode(97+x);}
+function rankChar(y){return String(9-y);}
+function codeToMove(c){
+  var s=String(c||'').trim().toLowerCase();
+  if(!/^[a-i][0-9][a-i][0-9]$/.test(s))return null;
+  return {fx:s.charCodeAt(0)-97, fy:9-(s.charCodeAt(1)-48),
+          tx:s.charCodeAt(2)-97, ty:9-(s.charCodeAt(3)-48)};
+}
+
+// 重放棋谱得到终局，用于断线追平与校验
+function replay(codes, fen){
+  var st=parseFen(fen||START_FEN);
+  var board=st.board, turn=st.turn;
+  for(var i=0;i<codes.length;i++){
+    var m=codeToMove(codes[i]);
+    if(!m)return {ok:false,err:'格式错误 '+codes[i],step:i,board:board,turn:turn};
+    var lm=legalMoves(board,turn), found=false;
+    for(var j=0;j<lm.length;j++){
+      if(lm[j].fx===m.fx&&lm[j].fy===m.fy&&lm[j].tx===m.tx&&lm[j].ty===m.ty){found=true;break;}
+    }
+    if(!found)return {ok:false,err:'非法着法 '+codes[i],step:i,board:board,turn:turn};
+    applyMove(board,m);
+    turn=(turn===RED?BLK:RED);
+  }
+  return {ok:true,board:board,turn:turn,steps:codes.length};
+}
+
+// 某方走法可达的格子（允许目标是己方子），用于判断有根 / 无根
+function guardTargets(board,side){
+  var ps=genPseudo(board,side,true), set={};
+  for(var i=0;i<ps.length;i++){
+    var m=ps[i];
+    var q=board[m.ty][m.tx];
+    if(q&&q.s===side&&q.t==='K'){set[m.ty*9+m.tx]=1;continue;}
+    var cap=applyMove(board,m);
+    var ok=!isChecked(board,side);
+    undoMove(board,m,cap);
+    if(ok)set[m.ty*9+m.tx]=1;
+  }
+  return set;
+}
+
+// 判定杀法名：先看逃路为何断，再验证关键子是否必要
+// 逐条模拟将的逃路，归类失败原因：照面 / 自堵 / 仍被攻击
+function analyzeEscapes(board,loser,k){
+  var dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  var face=0,self=0,ctl=0,free=0,cells=[];
+  for(var i=0;i<4;i++){
+    var tx=k.x+dirs[i][0], ty=k.y+dirs[i][1];
+    if(!inPalace(loser,tx,ty))continue;
+    cells.push({x:tx,y:ty});
+    var q=board[ty][tx];
+    if(q&&q.s===loser){self++;continue;}
+    var m={fx:k.x,fy:k.y,tx:tx,ty:ty};
+    var cap=applyMove(board,m);
+    var faceNow=kingsFace(board);
+    var stillCk=isChecked(board,loser);
+    undoMove(board,m,cap);
+    if(faceNow)face++;
+    else if(stillCk)ctl++;
+    else free++;
+  }
+  return {face:face,self:self,ctl:ctl,free:free,cells:cells};
+}
+
+function cloneBoard(b){
+  var o=[],i;
+  for(i=0;i<10;i++)o.push(b[i].slice());
+  return o;
+}
+
+// 反事实检验：移除关键棋子后，被将死方是否恢复合法走法
+function probeEscape(board,loser,mutate){
+  var b=cloneBoard(board);
+  mutate(b);
+  return legalMoves(b,loser).length>0;
+}
+
+function killAt(x,y){ return function(b){ b[y][x]=null; }; }
+
+function attacksSquare(board,side,fx,fy,tx,ty){
+  var ms=genPseudo(board,side),i;
+  for(i=0;i<ms.length;i++){
+    if(ms[i].fx===fx&&ms[i].fy===fy&&ms[i].tx===tx&&ms[i].ty===ty)return true;
+  }
+  return false;
+}
+
+function classifyMate(board,loser,last){
+  var k=findKing(board,loser);
+  var win=(loser===RED?BLK:RED);
+  if(!k)return {name:'绝杀',color:'#ffd479'};
+
+  var lp=(last&&board[last.ty])?board[last.ty][last.tx]:null;
+  var esc=analyzeEscapes(board,loser,k);
+  var y,x,p,q,a,b,yy,i;
+
+  // 1. 对面笑：有逃路被照面封死，且拿掉对方的帅，将就能活
+  if(esc.face>0&&probeEscape(board,loser,function(bb){
+      var rk=findKing(bb,win);
+      if(rk)bb[rk.y][rk.x]=null;
+    }))
+    return {name:'对面笑',color:'#ffffff'};
+
+  // 2. 重炮：同列两炮、有一门真能打到将，且拿掉一门炮将就活
+  var colC=0, liveC=0, cannonCells=[];
+  for(y=0;y<10;y++){
+    q=board[y][k.x];
+    if(q&&q.s===win&&q.t==='C'){
+      colC++;
+      cannonCells.push({x:k.x,y:y});
+      var between=0;
+      a=Math.min(y,k.y);b=Math.max(y,k.y);
+      for(yy=a+1;yy<b;yy++) if(board[yy][k.x]) between++;
+      if(between===1) liveC++;
+    }
+  }
+  if(colC>=2&&liveC>=1){
+    for(i=0;i<cannonCells.length;i++){
+      if(probeEscape(board,loser,killAt(cannonCells[i].x,cannonCells[i].y)))
+        return {name:'重炮',color:'#ff6b3d'};
+    }
+  }
+
+  // 3. 马系：末手是马，拿掉这匹马将就有救
+  if(lp&&lp.s===win&&lp.t==='N'&&
+     probeEscape(board,loser,killAt(last.tx,last.ty))){
+    var horseChecks=attacksSquare(board,win,last.tx,last.ty,k.x,k.y);
+    if(!horseChecks&&liveC>=1)return {name:'马后炮',color:'#ff9f1c'};
+    var deep=(loser===BLK)?(last.ty<=2):(last.ty>=7);
+    if(deep&&(last.tx===3||last.tx===5))return {name:'挂角马',color:'#8b7bff'};
+    if(deep&&(last.tx===1||last.tx===7))return {name:'卧槽马',color:'#35d0c0'};
+  }
+
+  // 4. 双车错：两辆车都压进对方半场，且逐一拿掉都能让将活命（两辆都必要）
+  var rooks=[];
+  for(y=0;y<10;y++)for(x=0;x<9;x++){
+    p=board[y][x];
+    if(p&&p.s===win&&p.t==='R'&&(loser===BLK?(y<=4):(y>=5))) rooks.push({x:x,y:y});
+  }
+  if(rooks.length>=2&&lp&&lp.s===win&&lp.t==='R'){
+    var bothNeeded=true;
+    for(i=0;i<rooks.length;i++){
+      if(!probeEscape(board,loser,killAt(rooks[i].x,rooks[i].y))){bothNeeded=false;break;}
+    }
+    if(bothNeeded)return {name:'双车错',color:'#d9e6ff'};
+  }
+
+  // 5. 铁门栓：车插中路，拿掉它将就活
+  if(lp&&lp.s===win&&lp.t==='R'&&last.tx===4&&
+     (loser===BLK?(last.ty<=4):(last.ty>=5))&&
+     probeEscape(board,loser,killAt(last.tx,last.ty)))
+    return {name:'铁门栓',color:'#ffd479'};
+
+  // 6. 小鬼坐龙庭：兵卒入宫，拿掉它将就活
+  if(lp&&lp.s===win&&lp.t==='P'&&inPalace(loser,last.tx,last.ty)&&
+     probeEscape(board,loser,killAt(last.tx,last.ty)))
+    return {name:'小鬼坐龙庭',color:'#7ee08a'};
+
+  // 7. 闷杀：某条逃路被自家子堵死，且挪走它，将就有救
+  for(i=0;i<esc.cells.length;i++){
+    var c=esc.cells[i];
+    var occ=board[c.y][c.x];
+    if(occ&&occ.s===loser&&probeEscape(board,loser,killAt(c.x,c.y)))
+      return {name:'闷杀',color:'#ff8a5c'};
+  }
+
+  return {name:'绝杀',color:'#ffd479'};
+}
+
+// ==ENGINE_END==
+
+/* ============================ MQTT ============================ */
+// ==MQTT_START==
+// MQTT 3.1.1 over WebSocket 的最小实现：只支持 QoS0 的收发与订阅
+function utf8(s){return new TextEncoder().encode(s);}
+function encStr(s){var b=utf8(s);return [(b.length>>8)&255,b.length&255].concat(Array.from(b));}
+function encRemain(n){var o=[];do{var d=n%128;n=Math.floor(n/128);if(n>0)d|=0x80;o.push(d);}while(n>0);return o;}
+function cat(parts){
+  var len=0,i,j;
+  for(i=0;i<parts.length;i++)len+=parts[i].length;
+  var out=new Uint8Array(len),p=0;
+  for(i=0;i<parts.length;i++){for(j=0;j<parts[i].length;j++)out[p++]=parts[i][j];}
+  return out;
+}
+function mqttConnectPacket(cid){
+  var body=[0x00,0x04,0x4d,0x51,0x54,0x54,0x04,0x02,0x00,0x3c].concat(encStr(cid));
+  return cat([new Uint8Array([0x10]),new Uint8Array(encRemain(body.length)),new Uint8Array(body)]);
+}
+function mqttSubscribePacket(topic,pid){
+  var body=[(pid>>8)&255,pid&255].concat(encStr(topic)).concat([0x00]);
+  return cat([new Uint8Array([0x82]),new Uint8Array(encRemain(body.length)),new Uint8Array(body)]);
+}
+function mqttPublishPacket(topic,payload){
+  var body=encStr(topic).concat(Array.from(utf8(payload)));
+  return cat([new Uint8Array([0x30]),new Uint8Array(encRemain(body.length)),new Uint8Array(body)]);
+}
+
+function MqttWS(url,opts){
+  opts=opts||{};
+  this.url=url;
+  this.clientId=opts.clientId||('cc_'+Math.random().toString(36).slice(2,10));
+  this.ws=null; this.buf=new Uint8Array(0); this.pid=1;
+  this.onMessage=null; this.onState=null;
+  this._resolveOpen=null; this._ping=null;
+}
+MqttWS.prototype.open=function(){
+  var self=this;
+  return new Promise(function(resolve,reject){
+    var ws;
+    try{ws=new WebSocket(self.url,'mqtt');}
+    catch(e){reject(e);return;}
+    ws.binaryType='arraybuffer';
+    self.ws=ws;
+    var done=false, timer=null;
+    function fail(err){
+      if(done)return; done=true;
+      if(timer)clearTimeout(timer);
+      try{ws.close();}catch(e){}
+      reject(err);
+    }
+    timer=setTimeout(function(){ fail(new Error('connect timeout')); },9000);
+    ws.onopen=function(){ self.send(mqttConnectPacket(self.clientId)); };
+    ws.onmessage=function(ev){ self.feed(ev.data); };
+    ws.onerror=function(){ fail(new Error('socket error')); };
+    ws.onclose=function(){
+      self.alive=false;
+      if(self._ping){clearInterval(self._ping);self._ping=null;}
+      if(!self._closedByUser&&self.onState)self.onState('offline');
+      if(!done){done=true;if(timer)clearTimeout(timer);reject(new Error('socket closed'));}
+    };
+    self._resolveOpen=function(){
+      if(done)return; done=true;
+      if(timer)clearTimeout(timer);
+      resolve();
+      self._ping=setInterval(function(){self.send(new Uint8Array([0xc0,0x00]));},30000);
+    };
+  });
+};
+MqttWS.prototype.send=function(u8){
+  if(this.ws&&this.ws.readyState===1){this.ws.send(u8);return true;}
+  return false;
+};
+MqttWS.prototype.feed=function(data){
+  var chunk = (data instanceof ArrayBuffer) ? new Uint8Array(data) : new Uint8Array(data);
+  var merged=new Uint8Array(this.buf.length+chunk.length);
+  merged.set(this.buf,0); merged.set(chunk,this.buf.length);
+  this.buf=merged;
+  for(;;){
+    if(this.buf.length<2)break;
+    var mult=1,val=0,i=1,ok=false;
+    for(;i<this.buf.length;i++){
+      var b=this.buf[i];
+      val+=(b&127)*mult; mult*=128;
+      if((b&128)===0){ok=true;i++;break;}
+    }
+    if(!ok)break;
+    var total=i+val;
+    if(this.buf.length<total)break;
+    var pkt=this.buf.slice(0,total);
+    this.buf=this.buf.slice(total);
+    this.handle(pkt);
+  }
+};
+MqttWS.prototype.handle=function(pkt){
+  var type=pkt[0]>>4;
+  var i=1; while(pkt[i]&0x80)i++; i++;
+  var p=pkt.subarray(i);
+  if(type===2){
+    this.alive=true;
+    if(this.onState)this.onState('online');
+    if(this._resolveOpen)this._resolveOpen();
+  }else if(type===3){
+    var tl=(p[0]<<8)|p[1];
+    var topic=new TextDecoder().decode(p.subarray(2,2+tl));
+    var off=2+tl;
+    var qos=(pkt[0]>>1)&3;
+    if(qos>0)off+=2;
+    var payload=new TextDecoder().decode(p.subarray(off));
+    if(this.onMessage)this.onMessage(topic,payload);
+  }
+};
+MqttWS.prototype.subscribe=function(topic){
+  var pid=this.pid++;
+  this.send(mqttSubscribePacket(topic,pid));
+  return pid;
+};
+MqttWS.prototype.publish=function(topic,payload){
+  return this.send(mqttPublishPacket(topic,payload));
+};
+MqttWS.prototype.close=function(){
+  this._closedByUser=true;
+  try{if(this._ping)clearInterval(this._ping);}catch(e){}
+  try{this.ws&&this.ws.close();}catch(e){}
+};
+// ==MQTT_END==
+
+/* ============================ 应用 ============================ */
+var el=function(id){return document.getElementById(id);};
+var canvas=el('board'), ctx=canvas.getContext('2d');
+
+var BROKER='wss://broker.emqx.io:8084/mqtt';
+var G={board:parseFen(START_FEN).board,turn:RED,moves:[],last:null,over:false,result:'',green:[],red:[],warn:[],inCheck:false};
+var mode='mqtt', mySide=null, room='', link=null, linkState='', peerOnline=false, peerConflict=false;
+var mySid='s'+Math.random().toString(36).slice(2,10);
+var sel=null, hints=[], flip=false;
+var S=40,PAD=32,DPR=1;
+
+/* ---------- 渲染 ---------- */
+function X(x){return PAD+(flip?8-x:x)*S;}
+function Y(y){return PAD+(flip?9-y:y)*S;}
+
+function layout(){
+  var w=el('boardWrap').clientWidth||360;
+  S=Math.max(24,Math.floor(w/9.6));
+  PAD=Math.round(S*0.8);
+  var cw=S*8+PAD*2, ch=S*9+PAD*2;
+  DPR=window.devicePixelRatio||1;
+  canvas.width=Math.round(cw*DPR);
+  canvas.height=Math.round(ch*DPR);
+  canvas.style.width=cw+'px';
+  canvas.style.height=ch+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  draw();
+}
+
+var fx=[], shakeUntil=0, rafId=0, lastTs=0, anim=null;
+
+function drawPiece(cx,cy,side,type,scale){
+  var r=S*0.42*scale;
+  ctx.beginPath();ctx.arc(cx,cy,r,0,6.2832);
+  ctx.fillStyle='#fbf3d9';ctx.fill();
+  ctx.lineWidth=Math.max(1.4,S*0.045);
+  ctx.strokeStyle=(side===RED?'#a8302a':'#2b2b2b');
+  ctx.stroke();
+  ctx.beginPath();ctx.arc(cx,cy,r*0.85,0,6.2832);
+  ctx.lineWidth=Math.max(1,S*0.018);ctx.stroke();
+  ctx.fillStyle=(side===RED?'#a8302a':'#2b2b2b');
+  ctx.font='bold '+Math.round(S*0.52*scale)+'px "KaiTi","STKaiti","SimSun",serif';
+  ctx.fillText(NAME[side][type],cx,cy+S*0.02*scale);
+}
+
+function playMoveAnim(m,cap,onEnd){
+  var dist=Math.max(Math.abs(m.tx-m.fx),Math.abs(m.ty-m.fy));
+  var p=G.board[m.ty]&&G.board[m.ty][m.tx];
+  if(!p){ if(onEnd)onEnd(); return; }
+  anim={fx:m.fx,fy:m.fy,tx:m.tx,ty:m.ty,piece:p,eat:cap||null,
+        t0:performance.now(),dur:Math.min(340,140+dist*42),onEnd:onEnd};
+  requestDraw();
+}
+
+function requestDraw(){ if(!rafId)rafId=requestAnimationFrame(tick); }
+function tick(ts){
+  rafId=0;
+  if(ts-lastTs<33){ rafId=requestAnimationFrame(tick); return; }
+  lastTs=ts;
+  if(anim&&(ts-anim.t0)>=anim.dur){
+    var cb=anim.onEnd;
+    anim=null;
+    if(cb)setTimeout(cb,0);
+  }
+  draw(ts);
+  var alive=fx.length>0||G.green.length||G.red.length||G.warn.length||ts<shakeUntil||anim||(G.inCheck&&!G.over);
+  if(alive&&!rafId)rafId=requestAnimationFrame(tick);
+}
+
+function hexA(hex,a){
+  var n=parseInt(hex.slice(1),16);
+  return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')';
+}
+
+function makeShards(color,n){
+  var a=[],i,ang,sp;
+  for(i=0;i<n;i++){
+    ang=Math.random()*6.2832; sp=0.45+Math.random()*0.95;
+    a.push({dx:Math.cos(ang)*sp,dy:Math.sin(ang)*sp,c:(Math.random()<0.34?'#ffffff':color)});
+  }
+  return a;
+}
+
+function addBurst(x,y,color){
+  fx.push({kind:'burst',x:x,y:y,color:color,t0:performance.now(),dur:640,shards:makeShards(color,11)});
+  requestDraw();
+}
+
+function addMate(x,y,color){
+  fx.push({kind:'mate',x:x,y:y,color:color,t0:performance.now(),dur:2600,
+           rays:12,spin:0.4+Math.random()*0.5});
+  requestDraw();
+}
+
+function boardPos(x,y){
+  var cr=canvas.getBoundingClientRect(), wr=el('boardWrap').getBoundingClientRect();
+  return {x:X(x)+cr.left-wr.left, y:Y(y)+cr.top-wr.top};
+}
+
+function bigText(text,opt){
+  opt=opt||{};
+  var wrap=el('boardWrap');
+  var d=document.createElement('div');
+  d.className='bigtext'+(opt.cls?(' '+opt.cls):'');
+  d.textContent=text;
+  var col=opt.color||'#ffd479';
+  d.style.color=col;
+  d.style.fontSize=Math.round(opt.size||44)+'px';
+  d.style.textShadow='0 0 18px '+col+',0 0 46px '+col+',0 3px 12px rgba(0,0,0,.9)';
+  if(opt.x!=null){d.style.left=opt.x+'px';d.style.top=opt.y+'px';}
+  else{d.style.left='50%';d.style.top='46%';}
+  d.style.animationDuration=(opt.dur||1000)+'ms';
+  wrap.appendChild(d);
+  setTimeout(function(){ if(d.parentNode)d.parentNode.removeChild(d); },(opt.dur||1000)+120);
+  return d;
+}
+
+function clearBigText(){
+  var olds=document.querySelectorAll('.bigtext');
+  for(var i=0;i<olds.length;i++)olds[i].remove();
+}
+
+function showBanner(name,color){
+  clearBigText();
+  var fl=el('flash');
+  if(fl){fl.classList.remove('on');void fl.offsetWidth;fl.classList.add('on');}
+  var b=el('banner'), t=b.querySelector('.t');
+  t.textContent=name;
+  t.style.color=color;
+  t.style.textShadow='0 0 26px '+color+',0 4px 14px rgba(0,0,0,.75)';
+  b.classList.remove('on');
+  void b.offsetWidth;
+  b.classList.add('on');
+  if(showBanner._t)clearTimeout(showBanner._t);
+  showBanner._t=setTimeout(function(){b.classList.remove('on');},2800);
+}
+
+function auraAt(x,y,color,phase){
+  var cx=X(x),cy=Y(y),r=S*0.42;
+  var pulse=0.7+0.3*Math.sin(phase);
+  var g=ctx.createRadialGradient(cx,cy,r*0.55,cx,cy,r*1.85);
+  g.addColorStop(0,hexA(color,0.34*pulse));
+  g.addColorStop(0.5,hexA(color,0.15*pulse));
+  g.addColorStop(1,hexA(color,0));
+  ctx.fillStyle=g;
+  ctx.beginPath();ctx.arc(cx,cy,r*1.85,0,6.2832);ctx.fill();
+}
+
+function ringAt(x,y,color,phase,dashed){
+  var cx=X(x),cy=Y(y),r=S*0.42;
+  var pulse=0.65+0.35*Math.sin(phase);
+  ctx.save();
+  ctx.strokeStyle=color;
+  ctx.globalAlpha=0.55+0.35*pulse;
+  ctx.lineWidth=Math.max(2,S*0.08);
+  ctx.shadowColor=color;
+  ctx.shadowBlur=S*0.75*pulse;
+  if(dashed){
+    ctx.setLineDash([S*0.19,S*0.13]);
+    ctx.lineDashOffset=-phase*S*0.34;
+  }
+  ctx.beginPath();ctx.arc(cx,cy,r*1.03,0,6.2832);ctx.stroke();
+  ctx.restore();
+}
+
+function drawFx(now){
+  var W=S*8+PAD*2,H=S*9+PAD*2;
+  for(var i=fx.length-1;i>=0;i--){
+    var f=fx[i];
+    var t=(now-f.t0)/f.dur;
+    if(t>=1){fx.splice(i,1);continue;}
+    if(t<0)continue;
+    var e=1-Math.pow(1-t,3);
+    var j,s,px,py,ang,r0,r1,tt,ee,a,dk,g2,w;
+    if(f.kind==='burst'){
+      ctx.save();
+      ctx.globalAlpha=(1-t)*0.85;
+      ctx.strokeStyle=f.color;
+      ctx.lineWidth=Math.max(1.5,S*0.075*(1-t));
+      ctx.beginPath();ctx.arc(f.x,f.y,S*0.35+e*S*1.45,0,6.2832);ctx.stroke();
+      for(j=0;j<f.shards.length;j++){
+        s=f.shards[j];
+        px=f.x+s.dx*e*S*1.9;
+        py=f.y+s.dy*e*S*1.9+S*1.15*t*t;
+        ctx.globalAlpha=Math.max(0,1-t*1.15);
+        ctx.fillStyle=s.c;
+        ctx.beginPath();ctx.arc(px,py,Math.max(0.6,S*0.085*(1-t*0.6)),0,6.2832);ctx.fill();
+      }
+      w=Math.max(0,1-t*2.4);
+      if(w>0){
+        ctx.globalAlpha=w*0.85;
+        ctx.fillStyle='#fff';
+        ctx.beginPath();ctx.arc(f.x,f.y,S*0.46*(1-t),0,6.2832);ctx.fill();
+      }
+      ctx.restore();
+    }else if(f.kind==='mate'){
+      for(var rr=0;rr<3;rr++){
+        tt=t-rr*0.16;
+        if(tt<0||tt>1)continue;
+        ee=1-Math.pow(1-tt,3);
+        ctx.save();
+        ctx.globalAlpha=(1-tt)*0.85;
+        ctx.strokeStyle=f.color;
+        ctx.lineWidth=Math.max(2,S*0.1*(1-tt));
+        ctx.shadowColor=f.color;ctx.shadowBlur=S*0.9;
+        ctx.beginPath();ctx.arc(f.x,f.y,S*0.4+ee*S*3.4,0,6.2832);ctx.stroke();
+        ctx.restore();
+      }
+      ctx.save();
+      ctx.globalAlpha=Math.max(0,1-t*1.5);
+      ctx.strokeStyle=f.color;ctx.lineWidth=Math.max(1.5,S*0.045);
+      ctx.shadowColor=f.color;ctx.shadowBlur=S*0.45;
+      for(a=0;a<f.rays;a++){
+        ang=(a/f.rays)*6.2832+f.spin*t*3;
+        r0=S*0.5+e*S*1.0; r1=S*0.5+e*S*2.4;
+        ctx.beginPath();
+        ctx.moveTo(f.x+Math.cos(ang)*r0,f.y+Math.sin(ang)*r0);
+        ctx.lineTo(f.x+Math.cos(ang)*r1,f.y+Math.sin(ang)*r1);
+        ctx.stroke();
+      }
+      ctx.restore();
+      dk=Math.max(0,1-Math.abs(t-0.15)*1.7);
+      if(dk>0){
+        ctx.save();
+        ctx.globalAlpha=dk*0.5;
+        g2=ctx.createRadialGradient(f.x,f.y,S*0.5,f.x,f.y,Math.max(W,H)*0.78);
+        g2.addColorStop(0,'rgba(0,0,0,0)');
+        g2.addColorStop(1,'rgba(0,0,0,1)');
+        ctx.fillStyle=g2;
+        ctx.fillRect(-S*2,-S*2,W+S*4,H+S*4);
+        ctx.restore();
+      }
+    }
+  }
+}
+
+function draw(now){
+  now=now||performance.now();
+  var W=S*8+PAD*2,H=S*9+PAD*2;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#e7cd99';
+  ctx.fillRect(0,0,W,H);
+
+  var shaking=now<shakeUntil;
+  ctx.save();
+  if(shaking){
+    var kk=(shakeUntil-now)/650;
+    ctx.translate((Math.random()-0.5)*S*0.26*kk,(Math.random()-0.5)*S*0.26*kk);
+  }
+
+  ctx.strokeStyle='#8a6b3a';
+  ctx.lineWidth=Math.max(1,S*0.026);
+  ctx.lineCap='round';
+
+  var x,y,i;
+  for(y=0;y<10;y++){
+    ctx.beginPath();ctx.moveTo(X(0),Y(y));ctx.lineTo(X(8),Y(y));ctx.stroke();
+  }
+  for(x=0;x<9;x++){
+    ctx.beginPath();
+    if(x===0||x===8){
+      ctx.moveTo(X(x),Y(0));ctx.lineTo(X(x),Y(9));
+    }else{
+      ctx.moveTo(X(x),Y(0));ctx.lineTo(X(x),Y(4));
+      ctx.moveTo(X(x),Y(5));ctx.lineTo(X(x),Y(9));
+    }
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(X(3),Y(0));ctx.lineTo(X(5),Y(2));
+  ctx.moveTo(X(5),Y(0));ctx.lineTo(X(3),Y(2));
+  ctx.moveTo(X(3),Y(7));ctx.lineTo(X(5),Y(9));
+  ctx.moveTo(X(5),Y(7));ctx.lineTo(X(3),Y(9));
+  ctx.stroke();
+
+  ctx.fillStyle='#9a7a45';
+  ctx.font=Math.round(S*0.46)+'px "KaiTi","STKaiti",serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  var mid=(Y(4)+Y(5))/2;
+  ctx.fillText('楚  河', X(2), mid);
+  ctx.fillText('汉  界', X(6), mid);
+
+  if(!G.board){ctx.restore();return;}
+
+  var phase=now/300;
+
+  // 上一手
+  if(G.last){
+    ctx.strokeStyle='rgba(80,140,90,.9)';
+    ctx.lineWidth=Math.max(2,S*0.06);
+    [G.last.fx,G.last.tx].forEach(function(cx2,idx){
+      var cy2=idx===0?G.last.fy:G.last.ty;
+      ctx.strokeRect(X(cx2)-S*0.34,Y(cy2)-S*0.34,S*0.68,S*0.68);
+    });
+  }
+
+  // 底层光晕：绿=可白吃，红=我方无根被打击
+  for(i=0;i<G.green.length;i++)auraAt(G.green[i][0],G.green[i][1],'#22cc6a',phase);
+  for(i=0;i<G.red.length;i++)auraAt(G.red[i][0],G.red[i][1],'#ff3b30',phase);
+  for(i=0;i<G.warn.length;i++)auraAt(G.warn[i][0],G.warn[i][1],'#ffc53d',phase*0.7);
+
+  // 棋子（正在滑行的那枚先不画在落点）
+  for(y=0;y<10;y++)for(x=0;x<9;x++){
+    var p=G.board[y][x];
+    if(!p)continue;
+    if(anim&&x===anim.tx&&y===anim.ty)continue;
+    drawPiece(X(x),Y(y),p.s,p.t,1);
+  }
+
+  // 滑行动画：被吃子保留原位，动画结束才消失
+  if(anim){
+    var at=(now-anim.t0)/anim.dur;
+    if(at>1)at=1;
+    var ae=1-Math.pow(1-at,3);
+    var ax=X(anim.fx)+(X(anim.tx)-X(anim.fx))*ae;
+    var ay=Y(anim.fy)+(Y(anim.ty)-Y(anim.fy))*ae;
+    for(var gi=3;gi>=1;gi--){
+      var ag=Math.max(0,at-gi*0.085);
+      var age=1-Math.pow(1-ag,3);
+      ctx.save();
+      ctx.globalAlpha=0.10*(4-gi)/3;
+      drawPiece(X(anim.fx)+(X(anim.tx)-X(anim.fx))*age,
+                Y(anim.fy)+(Y(anim.ty)-Y(anim.fy))*age,
+                anim.piece.s,anim.piece.t,1);
+      ctx.restore();
+    }
+    if(anim.eat)drawPiece(X(anim.tx),Y(anim.ty),anim.eat.s,anim.eat.t,1);
+    ctx.save();
+    ctx.shadowColor='rgba(0,0,0,.5)';
+    ctx.shadowBlur=S*0.32;
+    ctx.shadowOffsetY=S*0.1;
+    drawPiece(ax,ay,anim.piece.s,anim.piece.t,1+0.07*Math.sin(at*Math.PI));
+    ctx.restore();
+  }
+
+  // 顶层描边光环
+  for(i=0;i<G.green.length;i++)ringAt(G.green[i][0],G.green[i][1],'#2bd66a',phase,false);
+  for(i=0;i<G.red.length;i++)ringAt(G.red[i][0],G.red[i][1],'#ff4d4d',phase,false);
+  for(i=0;i<G.warn.length;i++)ringAt(G.warn[i][0],G.warn[i][1],'#ffc53d',phase,true);
+
+  // 选中
+  if(sel){
+    ctx.strokeStyle='#2f7ad6';
+    ctx.lineWidth=Math.max(2,S*0.07);
+    ctx.beginPath();ctx.arc(X(sel.x),Y(sel.y),S*0.46,0,6.2832);ctx.stroke();
+  }
+  // 可走点
+  for(var k=0;k<hints.length;k++){
+    var m=hints[k];
+    var canCap=G.board[m.ty][m.tx];
+    ctx.beginPath();
+    if(canCap){
+      ctx.strokeStyle='#2f7ad6';ctx.lineWidth=Math.max(2,S*0.06);
+      ctx.arc(X(m.tx),Y(m.ty),S*0.44,0,6.2832);ctx.stroke();
+    }else{
+      ctx.fillStyle='rgba(47,122,214,.55)';
+      ctx.arc(X(m.tx),Y(m.ty),S*0.13,0,6.2832);ctx.fill();
+    }
+  }
+
+  drawFx(now);
+
+  ctx.restore();
+}
+
+var PIECE_VAL={K:1000,R:9,C:4.5,N:4,B:2,A:2,P:1};
+function pieceVal(p,y){
+  if(!p)return 0;
+  if(p.t==='P')return (p.s===RED)?(y<=4?2:1):(y>=5?2:1);
+  return PIECE_VAL[p.t];
+}
+
+// 每格价值最低的攻击者，用于判断交换是否吃亏
+function atkMap(board,moves){
+  var map={},i,m,p,k,v;
+  for(i=0;i<moves.length;i++){
+    m=moves[i];
+    p=board[m.fy][m.fx];
+    if(!p)continue;
+    k=m.ty*9+m.tx;
+    v=pieceVal(p,m.fy);
+    if(map[k]===undefined||v<map[k])map[k]=v;
+  }
+  return map;
+}
+
+// 三色标记：
+//   绿 = 无根，可白吃
+//   黄 = 有根但是假根（吃回仍吃亏 / 保护不值钱）
+//   红 = 我方无根被打击
+function computeMarkers(){
+  G.green=[];G.red=[];G.warn=[];
+  if(!G.board||G.over){G.inCheck=false;requestDraw();return;}
+  var me=(mode!=='local'&&mySide)?mySide:G.turn;
+  var opp=(me===RED?BLK:RED);
+  var myL=legalMoves(G.board,me), opL=legalMoves(G.board,opp);
+  var myG=guardTargets(G.board,me), opG=guardTargets(G.board,opp);
+  var myAtk=atkMap(G.board,myL), opAtk=atkMap(G.board,opL);
+  for(var y=0;y<10;y++)for(var x=0;x<9;x++){
+    var p=G.board[y][x];
+    if(!p)continue;
+    var key=y*9+x;
+    var v=pieceVal(p,y);
+    if(p.s===opp){
+      if(myAtk[key]===undefined)continue;
+      if(!opG[key])G.green.push([x,y]);
+      else if(myAtk[key]<v)G.warn.push([x,y]);
+    }else{
+      if(opAtk[key]===undefined)continue;
+      if(!myG[key])G.red.push([x,y]);
+      else if(opAtk[key]<v)G.warn.push([x,y]);
+    }
+  }
+  G.inCheck=isChecked(G.board,G.turn);
+  requestDraw();
+}
+
+/* ---------- 交互 ---------- */
+function onPoint(x,y){
+  if(G.over)return;
+  if(mode==='mqtt'&&G.turn!==mySide)return;
+
+  var p=G.board[y][x];
+  if(sel){
+    if(sel.x===x&&sel.y===y){sel=null;hints=[];draw();return;}
+    for(var i=0;i<hints.length;i++){
+      var m=hints[i];
+      if(m.tx===x&&m.ty===y){sel=null;hints=[];commitMove(m);return;}
+    }
+  }
+  if(p&&p.s===G.turn){
+    sel={x:x,y:y};
+    hints=legalMoves(G.board,G.turn).filter(function(m){return m.fx===x&&m.fy===y;});
+    draw();
+  }else{
+    sel=null;hints=[];draw();
+  }
+}
+
+canvas.addEventListener('pointerdown',function(e){
+  e.preventDefault();
+  var r=canvas.getBoundingClientRect();
+  var px=e.clientX-r.left, py=e.clientY-r.top;
+  var gx=Math.round((px-PAD)/S), gy=Math.round((py-PAD)/S);
+  if(gx<0||gx>8||gy<0||gy>9)return;
+  if(flip){gx=8-gx;gy=9-gy;}
+  onPoint(gx,gy);
+});
+
+/* ---------- 落子 ---------- */
+function commitMove(m,opts){
+  opts=opts||{};
+  var side=G.turn;
+  var p=G.board[m.fy][m.fx];
+  if(!p||p.s!==side)return false;
+  var lm=legalMoves(G.board,side), ok=false;
+  for(var i=0;i<lm.length;i++){
+    if(lm[i].fx===m.fx&&lm[i].fy===m.fy&&lm[i].tx===m.tx&&lm[i].ty===m.ty){ok=true;break;}
+  }
+  if(!ok)return false;
+
+  var cap=applyMove(G.board,m);
+  G.moves.push(moveToCode(m));
+  G.last=m;
+  G.turn=(side===RED?BLK:RED);
+
+  log((side===RED?'红':'黑')+' '+NAME[side][p.t]+' '+moveToCode(m)+(cap?(' 吃'+NAME[cap.s][cap.t]):''));
+
+  var opp=G.turn;
+  var chk=false, kp=null, cls=null;
+  if(legalMoves(G.board,opp).length===0){
+    G.over=true;
+    chk=isChecked(G.board,opp);
+    G.result=(side===RED?'红方胜':'黑方胜')+(chk?'（将死）':'（困毙）');
+    kp=findKing(G.board,opp);
+    cls=chk?classifyMate(G.board,opp,m):{name:'困毙',color:'#9aa0a6'};
+  }
+
+  playMoveAnim(m,cap,function(){
+    if(cap){
+      addBurst(X(m.tx),Y(m.ty),cap.s===RED?'#c23b32':'#6a6a6a');
+      var bp=boardPos(m.tx,m.ty);
+      bigText('吃',{color:(cap.s===RED?'#ff5a4d':'#ffd166'),size:S*1.0,
+                    x:bp.x,y:bp.y-S*0.5,cls:'eat',dur:880});
+    }
+    if(G.over&&kp){
+      setTimeout(function(){
+        addMate(X(kp.x),Y(kp.y),cls.color);
+        showBanner(cls.name,cls.color);
+        shakeUntil=performance.now()+650;
+        log('★ '+G.result+' · '+cls.name);
+      },cap?110:60);
+    }else if(G.inCheck){
+      setTimeout(function(){
+        bigText('将军',{color:'#ff3b30',size:S*1.32,dur:1150});
+        shakeUntil=performance.now()+420;
+      },cap?260:0);
+    }
+  });
+
+  sel=null;hints=[];
+  computeMarkers();updateStatus();
+  if(opts.broadcast!==false)sendState();
+  return true;
+}
+
+/* ---------- 网络 ---------- */
+function send(obj){
+  if(!link)return;
+  if(mode!=='mqtt')return;
+  obj.sid=mySid;
+  try{link.publish('cchess/'+room,JSON.stringify(obj));}catch(e){}
+}
+function sendState(){
+  send({v:1,type:'state',room:room,from:mySide,ver:G.moves.length,moves:G.moves,ts:Date.now()});
+  if(G.moves.length===1)setTimeout(function(){
+    send({v:1,type:'state',room:room,from:mySide,ver:G.moves.length,moves:G.moves,ts:Date.now()});
+  },600);
+}
+function sendCritical(obj){
+  send(obj);
+  setTimeout(function(){send(obj);},400);
+}
+function sendHello(){
+  send({v:1,type:'hello',room:room,from:mySide,ts:Date.now()});
+}
+
+function onWire(msg){
+  if(!msg||typeof msg!=='object')return;
+  if(msg.sid&&msg.sid===mySid)return;
+  if(msg.room&&room&&msg.room!==room)return;
+
+  if(msg.type==='hello'){
+    if(msg.from===mySide){peerConflict=true;updateStatus();return;}
+    var was=peerOnline;
+    peerOnline=true;peerConflict=false;
+    stopHelloLoop();
+    if(!helloAcked){helloAcked=true;sendHello();}
+    if(G.moves.length>0)sendState();
+    if(!was)log('✓ 对方已上线');
+    updateStatus();
+    return;
+  }
+  if(msg.from===mySide)return;
+
+  if(msg.type==='state'){
+    if(msg.ver<=G.moves.length)return;
+    var prevLen=G.moves.length;
+    var nc=(msg.moves||[]).length;
+    var lm=null, eat=null;
+    if(nc===prevLen+1){
+      lm=codeToMove(msg.moves[nc-1]);
+      if(lm)eat=G.board[lm.ty][lm.tx]||null;
+    }
+    var r=replay(msg.moves||[]);
+    if(r.ok){
+      G.board=r.board;G.turn=r.turn;G.moves=(msg.moves||[]).slice();
+      G.last=G.moves.length?codeToMove(G.moves[G.moves.length-1]):null;
+      G.over=false;G.result='';
+      var opp=G.turn, kp2=null, cls2=null;
+      if(legalMoves(G.board,opp).length===0){
+        G.over=true;
+        kp2=findKing(G.board,opp);
+        var chk2=isChecked(G.board,opp);
+        G.result=((opp===RED?'黑方胜':'红方胜'))+(chk2?'（将死）':'（困毙）');
+        cls2=chk2?classifyMate(G.board,opp,G.last):{name:'困毙',color:'#9aa0a6'};
+      }
+      sel=null;hints=[];
+      var after=function(){
+        if(eat){
+          addBurst(X(lm.tx),Y(lm.ty),eat.s===RED?'#c23b32':'#6a6a6a');
+          var bp2=boardPos(lm.tx,lm.ty);
+          bigText('吃',{color:(eat.s===RED?'#ff5a4d':'#ffd166'),size:S*1.0,
+                        x:bp2.x,y:bp2.y-S*0.5,cls:'eat',dur:880});
+        }
+        if(G.over&&kp2){
+          setTimeout(function(){
+            addMate(X(kp2.x),Y(kp2.y),cls2.color);
+            showBanner(cls2.name,cls2.color);
+            shakeUntil=performance.now()+650;
+          },eat?110:60);
+        }else if(G.inCheck){
+          setTimeout(function(){
+            bigText('将军',{color:'#ff3b30',size:S*1.32,dur:1150});
+            shakeUntil=performance.now()+420;
+          },eat?260:0);
+        }
+      };
+      if(lm)playMoveAnim(lm,eat,after); else after();
+      computeMarkers();updateStatus();
+      log('⇄ 同步到第 '+G.moves.length+' 手');
+    }else{
+      log('✗ 同步失败：'+r.err+'，请求重发');
+      send({v:1,type:'sync',room:room,from:mySide,ts:Date.now()});
+    }
+    return;
+  }
+  if(msg.type==='sync'){sendState();return;}
+  if(msg.type==='reset'){resetGame();log('↺ 对方开新局');return;}
+  if(msg.type==='resign'){
+    G.over=true;
+    G.result=(msg.from===RED?'红方认输':'黑方认输')+'，'+((msg.from===RED?'黑方':'红方'))+'胜';
+    log(G.result);computeMarkers();updateStatus();return;
+  }
+  if(msg.type==='draw-req'){
+    showAsk('对方求和',function(){
+      sendCritical({v:1,type:'draw-ok',room:room,from:mySide,ts:Date.now()});
+      finishDraw();
+    },function(){
+      send({v:1,type:'draw-no',room:room,from:mySide,ts:Date.now()});
+      log('已拒绝求和');
+    });
+    return;
+  }
+  if(msg.type==='draw-ok'){pendingReq=null;finishDraw();log('对方同意求和');return;}
+  if(msg.type==='draw-no'){pendingReq=null;log('对方拒绝求和');return;}
+  if(msg.type==='undo-req'){
+    if(!G.moves.length)return;
+    showAsk('对方请求悔棋',function(){
+      applyUndo(G.moves.length-1);
+      sendCritical({v:1,type:'undo-ok',room:room,from:mySide,moves:G.moves,ts:Date.now()});
+      log('已同意悔棋');
+    },function(){
+      send({v:1,type:'undo-no',room:room,from:mySide,ts:Date.now()});
+      log('已拒绝悔棋');
+    });
+    return;
+  }
+  if(msg.type==='undo-ok'){pendingReq=null;applyUndoList(msg.moves||[]);log('对方同意悔棋');return;}
+  if(msg.type==='undo-no'){pendingReq=null;log('对方拒绝悔棋');return;}
+}
+
+var reconnectTimer=null, backoff=1000, helloTimer=null, helloAcked=false;
+
+function scheduleReconnect(){
+  if(mode!=='mqtt'||!mySide)return;
+  if(reconnectTimer)clearTimeout(reconnectTimer);
+  reconnectTimer=setTimeout(function(){
+    if(mode!=='mqtt'||!mySide)return;
+    log('重连中…');
+    connectMqtt();
+  },backoff);
+  backoff=Math.min(backoff*2,30000);
+}
+
+function stopHelloLoop(){
+  if(helloTimer){clearInterval(helloTimer);helloTimer=null;}
+}
+
+function startHelloLoop(){
+  helloAcked=false;
+  stopHelloLoop();
+  var n=0;
+  sendHello();
+  helloTimer=setInterval(function(){
+    if(peerOnline||n++>=10){stopHelloLoop();return;}
+    sendHello();
+  },2500);
+}
+
+function connectMqtt(){
+  if(!room){log('先填房间号');return;}
+  if(!mySide){log('先选执红或执黑');return;}
+  if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}
+  if(link){try{link.close();}catch(e){}link=null;}
+  stopHelloLoop();
+  linkState='connecting';updateStatus();
+  log('连接 broker…');
+  var c=new MqttWS(BROKER);
+  link=c;
+  c.onMessage=function(topic,payload){
+    if(topic!=='cchess/'+room)return;
+    var msg=null;
+    try{msg=JSON.parse(payload);}catch(e){return;}
+    onWire(msg);
+  };
+  c.onState=function(st){
+    if(st==='online'){
+      linkState='online';backoff=1000;
+      c.subscribe('cchess/'+room);
+      startHelloLoop();
+      log('已连接 · 房间 '+room);
+      updateStatus();
+    }else{
+      linkState='offline';updateStatus();
+      scheduleReconnect();
+    }
+  };
+  c.open().catch(function(err){
+    if(linkState==='connecting'){linkState='offline';updateStatus();}
+    log('连接失败：'+(err&&err.message||err));
+    scheduleReconnect();
+  });
+}
+
+function disconnect(){
+  if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}
+  stopHelloLoop();
+  if(link){try{link.close();}catch(e){}link=null;}
+  linkState='';peerOnline=false;peerConflict=false;
+}
+
+/* ---------- 界面 ---------- */
+var pendingReq=null, askYes=null, askNo=null;
+
+function log(s){
+  var box=el('log');
+  box.textContent+=(box.textContent?'\n':'')+s;
+  box.scrollTop=box.scrollHeight;
+}
+
+function updateStatus(){
+  var t;
+  if(G.over) t=G.result;
+  else if(mode==='local') t=(G.turn===RED?'红方':'黑方')+'走棋';
+  else if(peerConflict) t='双方选了同一边';
+  else if(linkState==='connecting') t='连接中';
+  else if(linkState!=='online') t='未连接';
+  else if(!mySide) t='选择执红或执黑';
+  else if(!peerOnline) t='等待对手';
+  else t=(G.turn===RED?'红方':'黑方')+'走棋';
+
+  if(!G.over&&G.inCheck) t+='，将军';
+
+  el('statText').textContent=t;
+  el('dot').className='dot'+(((mode==='local')||linkState==='online')?' ok':'');
+
+  el('btnResign').textContent=G.over?'新对局':'认输';
+  el('btnDraw').disabled=G.over;
+  el('btnUndoReq').disabled=G.over;
+}
+
+function setMode(m){
+  mode=m;
+  disconnect();
+  mySide=null;peerConflict=false;flip=false;
+  document.querySelectorAll('.sideBtn').forEach(function(b){b.classList.remove('on');});
+  el('netRow').style.display=(m==='mqtt')?'flex':'none';
+  el('actLocal').style.display=(m==='mqtt')?'none':'flex';
+  el('actOnline').style.display=(m==='mqtt')?'flex':'none';
+  hideAsk();
+  layout();updateStatus();
+}
+
+function randRoom(){
+  var a='abcdefghjkmnpqrstuvwxyz23456789', s='';
+  for(var i=0;i<8;i++)s+=a[Math.floor(Math.random()*a.length)];
+  return s;
+}
+
+function resetGame(){
+  G.board=parseFen(START_FEN).board;
+  G.turn=RED;G.moves=[];G.last=null;G.over=false;G.result='';
+  G.green=[];G.red=[];G.warn=[];G.inCheck=false;
+  sel=null;hints=[];anim=null;fx=[];shakeUntil=0;
+  el('log').textContent='';
+  hideAsk();
+  computeMarkers();updateStatus();
+}
+
+function pickSide(side){
+  mySide=side;
+  flip=(side===BLK);
+  document.querySelectorAll('.sideBtn').forEach(function(b){b.classList.remove('on');});
+  el(side===RED?'btnRed':'btnBlack').classList.add('on');
+  disconnect();
+  peerOnline=false;peerConflict=false;
+  if(mode==='mqtt')connectMqtt();
+  layout();updateStatus();
+}
+
+/* 把棋谱截断到指定长度并重放 */
+function applyUndoList(list){
+  var r=replay(list);
+  if(!r.ok)return;
+  G.board=r.board;G.turn=r.turn;G.moves=list.slice();
+  G.last=list.length?codeToMove(list[list.length-1]):null;
+  G.over=false;G.result='';
+  sel=null;hints=[];anim=null;
+  computeMarkers();updateStatus();
+}
+function applyUndo(n){
+  applyUndoList(G.moves.slice(0,Math.max(0,n)));
+}
+
+function finishDraw(){
+  G.over=true;G.result='和棋';
+  hideAsk();computeMarkers();updateStatus();
+}
+
+function showAsk(text,onYes,onNo){
+  el('askText').textContent=text;
+  askYes=onYes;askNo=onNo;
+  el('ask').classList.add('show');
+}
+function hideAsk(){
+  el('ask').classList.remove('show');
+  askYes=null;askNo=null;
+}
+
+/* 同一时间只允许挂一个待答复的请求 */
+function sendReq(type,label){
+  if(pendingReq){log('上一个请求还在等待答复');return;}
+  if(!peerOnline){log('对方不在线');return;}
+  pendingReq=type;
+  send({v:1,type:type,room:room,from:mySide,ts:Date.now()});
+  log('已发出'+label);
+  setTimeout(function(){pendingReq=null;},20000);
+}
+
+/* ---------- 绑定 ---------- */
+el('mode').addEventListener('change',function(){setMode(this.value);});
+
+el('btnRand').addEventListener('click',function(){
+  el('room').value=randRoom();
+  room=el('room').value;
+  if(mySide&&mode==='mqtt')connectMqtt();
+});
+el('room').addEventListener('input',function(){
+  room=this.value.trim().toLowerCase();
+});
+
+el('btnRed').addEventListener('click',function(){pickSide(RED);});
+el('btnBlack').addEventListener('click',function(){pickSide(BLK);});
+
+el('askYes').addEventListener('click',function(){var f=askYes;hideAsk();if(f)f();});
+el('askNo').addEventListener('click',function(){var f=askNo;hideAsk();if(f)f();});
+
+/* 本地双人 */
+el('btnNew').addEventListener('click',function(){resetGame();});
+el('btnUndo').addEventListener('click',function(){
+  if(G.over||!G.moves.length)return;
+  applyUndo(G.moves.length-1);
+});
+el('btnCopy').addEventListener('click',function(){
+  var t=G.moves.join(' ');
+  var done=function(){log('棋谱已复制');};
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(done,function(){window.prompt('棋谱',t);});
+  }else{
+    window.prompt('棋谱',t);
+  }
+});
+
+/* 联机 */
+el('btnResign').addEventListener('click',function(){
+  if(G.over){
+    resetGame();
+    send({v:1,type:'reset',room:room,from:mySide,ts:Date.now()});
+    log('新对局');
+    return;
+  }
+  showAsk('确定认输？',function(){
+    G.over=true;
+    G.result=(mySide===RED?'红方认输':'黑方认输')+'，'+((mySide===RED?'黑方':'红方'))+'胜';
+    sendCritical({v:1,type:'resign',room:room,from:mySide,ts:Date.now()});
+    log(G.result);updateStatus();
+  });
+});
+el('btnDraw').addEventListener('click',function(){
+  if(G.over)return;
+  sendReq('draw-req','求和请求');
+});
+el('btnUndoReq').addEventListener('click',function(){
+  if(G.over||!G.moves.length)return;
+  sendReq('undo-req','悔棋请求');
+});
+
+window.addEventListener('resize',function(){layout();});
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='visible'&&mode==='mqtt'&&mySide){
+    if(linkState!=='online')connectMqtt();
+    else{sendHello();if(G.moves.length)sendState();}
+  }
+});
+
+/* ---------- 启动 ---------- */
+room=randRoom();
+el('room').value=room;
+setMode('mqtt');
+</script>
+</body>
+</html>
