@@ -6,7 +6,8 @@ DX=~/android-build/dx/usr/share/java/com.android.dx.jar
 AJ=/usr/lib/android-sdk/platforms/android-23/android.jar
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
-cp "$HERE/index.html" "$ROOT/assets/"
+rm -rf "$ROOT/assets"; mkdir -p "$ROOT/assets"
+cp "$HERE"/index.html "$HERE"/style.css "$HERE"/engine.js "$HERE"/mqtt.js "$HERE"/app.js "$ROOT/assets/"
 cd "$ROOT/build"
 rm -rf classes classes.dex *.apk
 
