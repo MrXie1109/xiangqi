@@ -33,26 +33,55 @@ function mInPalace(side,x,y){
 }
 
 /* ---------- 逃路归因 ---------- */
-// 逐格试走，看每条逃路因何失效
-function mEscapes(board,loser,k){
+// 逐格试走，看每条逃路因何失效，并记录走完后的攻击者身份
+// face = 走完会形成将帅照面（规则禁止）
+// self = 被己方子占着
+// ctlSame = 走完仍被"原来那个将军子"攻击
+// ctlOther = 走完被别的子攻击
+function mEscapes(board,loser,k,checkers){
   var dirs=[[1,0],[-1,0],[0,1],[0,-1]];
-  var face=0,self=0,ctl=0,out=0,i;
+  var face=0,self=0,ctlSame=0,ctlOther=0,out=0,i;
+  // 原来将军子的坐标集合
+  var orig={};
+  if(checkers)for(i=0;i<checkers.length;i++)orig[checkers[i].x*9+checkers[i].y]=1;
+
   for(i=0;i<4;i++){
     var tx=k.x+dirs[i][0], ty=k.y+dirs[i][1];
     if(!mInPalace(loser,tx,ty)){out++;continue;}
     var q=board[ty][tx];
     if(q&&q.s===loser){self++;continue;}
+
     var cap=board[ty][tx];
-    board[ty][tx]=board[k.y][k.x];
+    var moving=board[k.y][k.x];
+    board[ty][tx]=moving;
     board[k.y][k.x]=null;
+
     var isFace=kingsFace(board);
-    var stillCk=isChecked(board,loser);
-    board[k.y][k.x]=board[ty][tx];
+    var atkNow=[];
+    if(!isFace){
+      var opp=(loser===RED?BLK:RED);
+      var ms=genPseudo(board,opp),j,p2;
+      for(j=0;j<ms.length;j++){
+        if(ms[j].tx===tx&&ms[j].ty===ty){
+          p2=board[ms[j].fy][ms[j].fx];
+          if(p2)atkNow.push({t:p2.t,x:ms[j].fx,y:ms[j].fy});
+        }
+      }
+    }
+    board[k.y][k.x]=moving;
     board[ty][tx]=cap;
-    if(isFace)face++;
-    else if(stillCk)ctl++;
+
+    if(isFace){face++;continue;}
+    if(!atkNow.length)continue;           // 这格其实能走，不该出现在将死局面里
+
+    var same=false,kk;
+    for(kk=0;kk<atkNow.length;kk++){
+      if(orig[atkNow[kk].x*9+atkNow[kk].y])same=true;
+    }
+    if(same)ctlSame++; else ctlOther++;
   }
-  return {face:face,self:self,ctl:ctl,out:out};
+  return {face:face,self:self,ctlSame:ctlSame,ctlOther:ctlOther,
+          ctl:ctlSame+ctlOther,out:out};
 }
 
 /* ---------- 局面特征 ---------- */
@@ -60,8 +89,8 @@ function mEscapes(board,loser,k){
 function mFeatures(board,loser,last){
   var k=findKing(board,loser);
   var win=(loser===RED?BLK:RED);
-  var esc=mEscapes(board,loser,k);
   var atk=mAttackers(board,win,k);
+  var esc=mEscapes(board,loser,k,atk);
   var lastPiece=null,lastType='';
   if(last&&board[last.ty]&&board[last.ty][last.tx]){
     lastPiece=board[last.ty][last.tx];
@@ -148,8 +177,12 @@ var MATE_SCORERS=[
   // 白脸将：逃路被照面规则封死（用户标注 25 例，全部含 face）
   function(f){
     var s=0;
-    if(f.esc.face>=1)s=72;
-    else return 0;                    // 必须有照面
+    if(f.esc.face>=1){
+      // 马在将军时，逃路是被别的子封的，此时照面才是决定性特征
+      s=(f.atkTypes.indexOf('N')>=0)?130:100;
+    }
+    else if(f.esc.ctlSame>=2&&f.esc.ctlOther===0)s=66;   // 两条逃路被同一子追
+    else return 0;
     if(f.esc.face===1)s+=6;
     if(f.esc.ctl>=1)s+=8;
     if(f.atkTypes==='R')s+=8;
@@ -157,17 +190,21 @@ var MATE_SCORERS=[
     if(f.esc.self===0)s+=6;
     return {name:'白脸将',score:s};
   },
-  // 闷杀：逃路被己方子堵死，且没有照面（用户标注 7 例，自堵都是 1~2 条）
+  // 闷杀：逃路只有"原来那个将军子"在追，没有别的子参与
+  // 依据：用户 100 条标注，15 例闷杀中 14 例 other==0（#12 有照面，另计）
   function(f){
-    if(f.esc.self===0)return 0;
-    if(f.esc.face>0)return 0;         // 有照面的归白脸将
-    var s=46;
-    if(f.esc.self===1)s+=14;
-    if(f.esc.self>=2)s+=8;
-    if(f.esc.ctl===1)s+=12;
-    if(f.esc.ctl>=2)s+=2;
-    if(f.atkTypes==='R')s+=6;
+    if(f.esc.ctlSame===0)return 0;
+    if(f.esc.ctlOther>0)return 0;             // 有别的子 → 归将死
+    if(f.esc.face>0)return 0;                 // 有照面 → 归白脸将
+    if(f.esc.ctlSame>=2)return 0;             // 多条同子追击 → 归白脸将
+    var s=52;
+    if(f.esc.self>=1)s+=6;
     return {name:'闷杀',score:s};
+  },
+  // 将死：逃路被"另一子"攻击参与封锁
+  function(f){
+    if(f.esc.ctlOther===0)return 0;
+    return {name:'将死',score:30+f.esc.ctlOther*2};
   },
   // 闷宫：炮以士为架，士紧贴将
   function(f){
@@ -192,22 +229,22 @@ var MATE_SCORERS=[
   // 卧槽马：马在对方第8线二六路
   function(f){
     if(!mMatchHorse(f,[[2,8],[6,8]]))return 0;
-    return {name:'卧槽马',score:58};
+    return {name:'卧槽马',score:125};
   },
   // 八角马：马占对方九宫角
   function(f){
     if(!mMatchHorse(f,[[3,7],[5,7],[3,9],[5,9],[4,8]]))return 0;
-    return {name:'八角马',score:58};
+    return {name:'八角马',score:124};
   },
   // 钓鱼马：马在对方第7线
   function(f){
     if(!mMatchHorse(f,[[2,7],[6,7]]))return 0;
-    return {name:'钓鱼马',score:56};
+    return {name:'钓鱼马',score:123};
   },
   // 侧面虎：马在对方第6线
   function(f){
     if(!mMatchHorse(f,[[3,6],[6,6],[3,5]]))return 0;
-    return {name:'侧面虎',score:56};
+    return {name:'侧面虎',score:122};
   },
   // 铁门栓：炮镇中路 + 车将军
   function(f){
@@ -217,13 +254,13 @@ var MATE_SCORERS=[
       if(p&&p.s===f.win&&p.t==='C')mid=true;
     }
     if(!mid||!f.rookChecking)return 0;
-    return {name:'铁门栓',score:52};
+    return {name:'铁门栓',score:121};
   },
   // 大刀剜心：末手吃掉对方士，落点在中线
   function(f){
     if(!f._cap||f._cap.t!=='A')return 0;
     if(f._lastMid!==1)return 0;
-    return {name:'大刀剜心',score:57};
+    return {name:'大刀剜心',score:123};
   },
   // 双车错
   function(f){
