@@ -1068,15 +1068,21 @@ el('btnUndo').addEventListener('click',function(){
   if(G.over)n=Math.min(n,G.moves.length)||1;
   applyUndo(G.moves.length-n);
 });
-el('btnCopy').addEventListener('click',function(){
+function copyMoves(){
   var t=G.moves.join(' ');
+  if(!t){log('还没有棋步');return;}
   var done=function(){log('棋谱已复制');};
   if(navigator.clipboard&&navigator.clipboard.writeText){
-    navigator.clipboard.writeText(t).then(done,function(){window.prompt('棋谱',t);});
+    navigator.clipboard.writeText(t).then(done,function(){
+      // 无剪贴板权限时退化为可选中文本
+      window.prompt('棋谱（Ctrl+C 复制）',t);
+    });
   }else{
-    window.prompt('棋谱',t);
+    window.prompt('棋谱（Ctrl+C 复制）',t);
   }
-});
+}
+el('btnCopy').addEventListener('click',copyMoves);
+el('btnCopy2').addEventListener('click',copyMoves);
 
 /* 联机 */
 el('btnResign').addEventListener('click',function(){

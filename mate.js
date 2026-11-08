@@ -36,12 +36,54 @@ function mOwnHalf(loser,y){ return (loser===BLK)?(y<=4):(y>=5); }
 
 /* ---------- 逐条判定 ---------- */
 
-// 白脸将 / 对面笑：两将同列且中间无子（将帅不得对面）
-// 源：象棋物语 23；百度百科·绝杀
+// 逃路归因：把将的每个可走格真的走一遍，看它因何非法
+// face = 走完会形成将帅照面（规则禁止）
+// self = 被己方子占着
+// ctl  = 走完仍被攻击
+function analyzeEscapes(board,loser,k){
+  var dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  var face=0,self=0,ctl=0;
+  for(var i=0;i<4;i++){
+    var tx=k.x+dirs[i][0], ty=k.y+dirs[i][1];
+    if(!inPalace(loser,tx,ty))continue;
+    var q=board[ty][tx];
+    if(q&&q.s===loser){self++;continue;}
+    var m={fx:k.x,fy:k.y,tx:tx,ty:ty};
+    var cap=applyMove(board,m);
+    var isFace=kingsFace(board);
+    var stillCk=isChecked(board,loser);
+    undoMove(board,m,cap);
+    if(isFace)face++;
+    else if(stillCk)ctl++;
+  }
+  return {face:face,self:self,ctl:ctl};
+}
+
+// 收集正在将军的己方棋子
+function mCheckers(board,win,k){
+  var ms=genPseudo(board,win),out=[],i,p;
+  for(i=0;i<ms.length;i++){
+    if(ms[i].tx===k.x&&ms[i].ty===k.y){
+      p=board[ms[i].fy][ms[i].fx];
+      if(p)out.push({x:ms[i].fx,y:ms[i].fy,t:p.t});
+    }
+  }
+  return out;
+}
+
+// 白脸将 / 对面笑：将的逃路是被"将帅不得照面"这条规则封死的
+// 源：象棋物语 23「根据帅、将不能在同一直线上直接对面的规则」
+// 判据：至少有一条逃路，走完会形成照面（这才叫"利用照面规则杀"）
 function isFacing(board,loser,k,win){
-  var o=findKing(board,win);
-  if(!o||o.x!==k.x)return false;
-  return mBetween(board,o.x,o.y,k.x,k.y)===0;
+  var esc=analyzeEscapes(board,loser,k);
+  if(esc.face<=0)return false;
+  var ck=mCheckers(board,win,k),i;
+  if(!ck.length)return false;
+  // 照面只能作为"直线子"的封口手段；马将军归马类杀法
+  for(i=0;i<ck.length;i++){
+    if(ck[i].t!=='R'&&ck[i].t!=='P'&&ck[i].t!=='C')return false;
+  }
+  return true;
 }
 
 // 双照将 / 双将：一步棋使己方两个棋子同时将军
