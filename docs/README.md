@@ -19,7 +19,7 @@
 
 ## Android
 
-`xiangqi.apk` 是 WebView 壳，把 `index.html` 打进 assets 离线运行，只申请联网权限。
+`dist_xiangqi.apk` 是 WebView 壳，把 html/css/engine/mate/mqtt/app 六个文件打进 assets 离线运行，只申请联网权限。
 安装后打开即用，界面与网页版完全一致。
 
 ## 部署
@@ -29,3 +29,11 @@
 ## 说明
 
 公共 MQTT 中继匿名无鉴权，房间号是随机 8 位，知道房间号的人能看到这盘棋。
+
+## 重新打包 APK
+
+```bash
+./tests/build-apk.sh
+```
+
+会重新拷贝 assets、生成 dex、对齐并签名，产物覆盖 `dist_xiangqi.apk`。

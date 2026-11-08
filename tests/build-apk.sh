@@ -7,7 +7,10 @@ AJ=/usr/lib/android-sdk/platforms/android-23/android.jar
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 rm -rf "$ROOT/assets"; mkdir -p "$ROOT/assets"
-cp "$HERE"/index.html "$HERE"/style.css "$HERE"/engine.js "$HERE"/mqtt.js "$HERE"/app.js "$ROOT/assets/"
+HERE2="$HERE"
+[ -f "$HERE2/index.html" ] || HERE2="$(dirname "$HERE")"   # 支持从 tests/ 或根目录调用
+cp "$HERE2"/index.html "$HERE2"/style.css "$HERE2"/engine.js "$HERE2"/mate.js "$HERE2"/mqtt.js "$HERE2"/app.js "$ROOT/assets/"
+ls "$ROOT/assets/" >&2
 cd "$ROOT/build"
 rm -rf classes classes.dex *.apk
 
@@ -21,5 +24,5 @@ zipalign -f -p 4 base.apk aligned.apk
 apksigner sign --ks "$ROOT/xiangqi.jks" --ks-pass pass:xiangqi2024 --key-pass pass:xiangqi2024 \
   --v1-signing-enabled true --v2-signing-enabled true --out "$ROOT/xiangqi.apk" aligned.apk
 
-cp "$ROOT/xiangqi.apk" "$HERE/xiangqi.apk"
-apksigner verify "$HERE/xiangqi.apk" && echo "OK: $HERE/xiangqi.apk ($(du -h "$HERE/xiangqi.apk" | cut -f1))"
+cp "$ROOT/xiangqi.apk" "$HERE2/dist_xiangqi.apk"
+apksigner verify "$HERE2/dist_xiangqi.apk" && echo "OK: $HERE2/dist_xiangqi.apk ($(du -h "$HERE2/dist_xiangqi.apk" | cut -f1))"
