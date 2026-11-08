@@ -87,19 +87,6 @@ function isSmotheredPalace(board,loser,k,win){
   return false;
 }
 
-// 臣压君：将被自己的棋子堵住去路而被将死
-// 源：象棋物语 26
-function isChenYaJun(board,loser,k){
-  var dirs=[[1,0],[-1,0],[0,1],[0,-1]],i,n=0;
-  for(i=0;i<4;i++){
-    var tx=k.x+dirs[i][0], ty=k.y+dirs[i][1];
-    if(!inPalace(loser,tx,ty))continue;
-    var q=board[ty][tx];
-    if(q&&q.s===loser)n++;
-  }
-  return n>0;
-}
-
 // 卧槽马：马在对方底象前一格（三·九 / 七·九）
 // 源：象棋物语 6；百度百科·绝杀「三·九或七·九」
 function isWoCaoHorse(board,loser,k,last,win){
@@ -218,7 +205,6 @@ function classifyMate(board,loser,last,lastCapture){
   if(isDiaoYuHorse(board,loser,k,last,win))return {name:'钓鱼马',color:'#60a5fa'};
   if(isSideTiger(board,loser,k,last,win))return {name:'侧面虎',color:'#74c0fc'};
   if(isDoubleRook(board,loser,k,win))return {name:'双车错',color:'#d9e6ff'};
-  if(isChenYaJun(board,loser,k))return {name:'臣压君',color:'#f5d0a9'};
 
   return {name:'将死',color:'#ffd479'};
 }
