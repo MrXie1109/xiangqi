@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>杀法标注</title>
+<style>
+  :root{--bg:#171613;--fg:#e8e2d4;--acc:#c8a05a;--panel:#26241f;--line:#3a3730}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+  body{display:flex;flex-direction:column;align-items:center;padding:10px}
+
+  header{width:100%;max-width:720px;display:flex;align-items:center;justify-content:space-between;
+    gap:10px;margin-bottom:8px}
+  h1{font-size:15px;margin:0;color:var(--acc);letter-spacing:2px;font-weight:600}
+  #prog{font-size:12px;color:#8b8579;font-variant-numeric:tabular-nums}
+  .bar{width:100%;max-width:720px;height:3px;background:#26241f;border-radius:2px;margin-bottom:12px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
+
+  #wrap{width:100%;max-width:720px;display:flex;gap:16px;flex-wrap:wrap;justify-content:center}
+  #boardBox{position:relative}
+  canvas{border-radius:10px;display:block;box-shadow:0 6px 20px rgba(0,0,0,.5)}
+
+  #side{flex:1;min-width:240px;display:flex;flex-direction:column;gap:10px}
+  #meta{display:flex;gap:8px;flex-wrap:wrap;font-size:12px}
+  .tag{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:4px 9px;color:#a9a294}
+  .tag.chk{color:#ff6b6b;border-color:#5a2f2f}
+
+  #quick{display:flex;flex-wrap:wrap;gap:6px}
+  #quick button{font:inherit;font-size:13px;padding:7px 11px;border-radius:8px;cursor:pointer;
+    background:#33302a;color:var(--fg);border:1px solid var(--line);transition:.12s}
+  #quick button:hover{background:#3d3931}
+  #quick button.sel{background:var(--acc);color:#171613;border-color:var(--acc);font-weight:700}
+
+  #custom{display:flex;gap:6px}
+  #custom input{flex:1;font:inherit;padding:8px 10px;border-radius:8px;
+    background:var(--panel);border:1px solid var(--line);color:var(--fg);outline:none}
+
+  .nav{display:flex;gap:8px;margin-top:auto}
+  .nav button{flex:1;font:inherit;padding:10px;border-radius:9px;cursor:pointer;
+    background:#33302a;color:var(--fg);border:1px solid var(--line)}
+  .nav button.primary{background:var(--acc);color:#171613;border-color:var(--acc);font-weight:700}
+  .nav button:disabled{opacity:.35;cursor:default}
+
+  #result{margin-top:14px;width:100%;max-width:720px;display:none}
+  #result.on{display:block}
+  textarea{width:100%;height:180px;font:12px/1.6 ui-monospace,Menlo,monospace;
+    background:#141310;color:#a9a294;border:1px solid var(--line);border-radius:9px;padding:10px;resize:vertical}
+
+  #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(80px);
+    background:var(--acc);color:#171613;padding:8px 18px;border-radius:20px;font-weight:700;
+    font-size:13px;opacity:0;transition:.25s;pointer-events:none}
+  #toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  .hint{font-size:12px;color:#7a746a}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>杀法标注</h1>
+  <span id="prog">0 / 100</span>
+</header>
+<div class="bar"><i id="barFill"></i></div>
+
+<div id="wrap">
+  <div id="boardBox"><canvas id="board"></canvas></div>
+
+  <div id="side">
+    <div id="meta">
+      <span class="tag" id="tNo">#1</span>
+      <span class="tag" id="tLoser">输方</span>
+      <span class="tag" id="tChk">状态</span>
+      <span class="tag" id="tAtk">将军者</span>
+    </div>
+
+    <div class="hint">常用（点一下即记录并跳到下一局）</div>
+    <div id="quick"></div>
+
+    <div class="hint">其他名称</div>
+    <div id="custom">
+      <input id="customIn" placeholder="输入杀法名，回车确认" autocomplete="off">
+    </div>
+
+    <div class="nav">
+      <button id="btnPrev">← 上一局</button>
+      <button id="btnSkip">跳过</button>
+      <button id="btnDone" class="primary">生成结果</button>
+    </div>
+  </div>
+</div>
+
+<div id="result">
+  <div class="hint" style="margin-bottom:8px">复制下面内容发给我：</div>
+  <textarea id="out" readonly></textarea>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const NAMES=[
+  '重炮','白脸将','闷宫','挂角马','卧槽马','八角马',
+  '钓鱼马','侧面虎','马后炮','双车错','双照将','将死','困毙','-'
+];
+
+let DATA=[], idx=0, labels={}, canvas, ctx;
+const S=44, PAD=34;
+
+function parseFen(fen){
+  const rows=fen.split(' ')[0].split('/');
+  const b=[];
+  for(let y=0;y<10;y++)b.push(new Array(9).fill(null));
+  rows.forEach((r,y)=>{
+    let x=0;
+    for(const c of r){
+      if(c>='1'&&c<='9'){x+=+c;continue;}
+      b[y][x]={s:c===c.toUpperCase()?'r':'b',t:c.toUpperCase()};
+      x++;
+    }
+  });
+  return b;
+}
+
+const NM={r:{K:'帅',A:'仕',B:'相',N:'马',R:'车',C:'炮',P:'兵'},
+          b:{K:'将',A:'士',B:'象',N:'马',R:'车',C:'炮',P:'卒'}};
+
+function draw(board){
+  const W=S*8+PAD*2, H=S*9+PAD*2;
+  const dpr=window.devicePixelRatio||1;
+  canvas.width=W*dpr; canvas.height=H*dpr;
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+
+  ctx.fillStyle='#e7cd99';
+  ctx.fillRect(0,0,W,H);
+
+  const X=x=>PAD+x*S, Y=y=>PAD+y*S;
+
+  ctx.strokeStyle='#8a6b3a';
+  ctx.lineWidth=Math.max(1,S*0.026);
+  ctx.lineCap='round';
+
+  for(let y=0;y<10;y++){
+    ctx.beginPath();ctx.moveTo(X(0),Y(y));ctx.lineTo(X(8),Y(y));ctx.stroke();
+  }
+  for(let x=0;x<9;x++){
+    ctx.beginPath();
+    if(x===0||x===8){ctx.moveTo(X(x),Y(0));ctx.lineTo(X(x),Y(9));}
+    else{
+      ctx.moveTo(X(x),Y(0));ctx.lineTo(X(x),Y(4));
+      ctx.moveTo(X(x),Y(5));ctx.lineTo(X(x),Y(9));
+    }
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(X(3),Y(0));ctx.lineTo(X(5),Y(2));
+  ctx.moveTo(X(5),Y(0));ctx.lineTo(X(3),Y(2));
+  ctx.moveTo(X(3),Y(7));ctx.lineTo(X(5),Y(9));
+  ctx.moveTo(X(5),Y(7));ctx.lineTo(X(3),Y(9));
+  ctx.stroke();
+
+  ctx.fillStyle='#9a7a45';
+  ctx.font=Math.round(S*0.42)+'px "KaiTi","STKaiti",serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  const mid=(Y(4)+Y(5))/2;
+  ctx.fillText('楚  河',X(2),mid);
+  ctx.fillText('汉  界',X(6),mid);
+
+  for(let y=0;y<10;y++)for(let x=0;x<9;x++){
+    const p=board[y][x];
+    if(!p)continue;
+    const cx=X(x),cy=Y(y),r=S*0.42;
+    ctx.beginPath();ctx.arc(cx,cy,r,0,6.2832);
+    ctx.fillStyle='#fbf3d9';ctx.fill();
+    ctx.lineWidth=Math.max(1.4,S*0.045);
+    ctx.strokeStyle=p.s==='r'?'#a8302a':'#2b2b2b';
+    ctx.stroke();
+    ctx.beginPath();ctx.arc(cx,cy,r*0.85,0,6.2832);
+    ctx.lineWidth=Math.max(1,S*0.018);ctx.stroke();
+    ctx.fillStyle=p.s==='r'?'#a8302a':'#2b2b2b';
+    ctx.font='bold '+Math.round(S*0.52)+'px "KaiTi","STKaiti",serif';
+    ctx.fillText(NM[p.s][p.t],cx,cy+S*0.02);
+  }
+}
+
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.classList.add('on');
+  clearTimeout(toast._t);
+  toast._t=setTimeout(()=>t.classList.remove('on'),900);
+}
+
+function render(){
+  const d=DATA[idx];
+  if(!d)return;
+  draw(parseFen(d.fen));
+  document.getElementById('tNo').textContent='#'+d.n;
+  document.getElementById('tLoser').textContent='输方：'+d.loser+'方';
+  const ck=document.getElementById('tChk');
+  ck.textContent=d.checked?'被将军':'未被将军';
+  ck.className='tag'+(d.checked?' chk':'');
+  document.getElementById('tAtk').textContent='将军者：'+(d.attackers||'无');
+
+  const done=Object.keys(labels).length;
+  document.getElementById('prog').textContent=done+' / '+DATA.length;
+  document.getElementById('barFill').style.width=(done/DATA.length*100)+'%';
+
+  document.querySelectorAll('#quick button').forEach(b=>{
+    b.classList.toggle('sel',labels[d.n]===b.textContent);
+  });
+  document.getElementById('customIn').value=
+    (labels[d.n] && !NAMES.includes(labels[d.n]))?labels[d.n]:'';
+  document.getElementById('btnPrev').disabled=idx===0;
+}
+
+function label(v){
+  const d=DATA[idx];
+  labels[d.n]=v;
+  toast('已记为 '+v);
+  render();
+  if(idx<DATA.length-1){ idx++; setTimeout(render,140); }
+}
+
+function build(){
+  const q=document.getElementById('quick');
+  NAMES.forEach(n=>{
+    const b=document.createElement('button');
+    b.textContent=n;
+    b.onclick=()=>label(n);
+    q.appendChild(b);
+  });
+}
+
+function output(){
+  const lines=['# 杀法标注结果',''];
+  lines.push('| # | 局面 | 输方 | 状态 | 将军者 | 杀法名 |');
+  lines.push('|---|---|---|---|---|---|');
+  DATA.forEach(d=>{
+    const v=labels[d.n]||'(未标)';
+    lines.push(`| ${d.n} | \`${d.fen}\` | ${d.loser}方 | ${d.checked?'将军':'未将军'} | ${d.attackers||'无'} | ${v} |`);
+  });
+  const done=Object.keys(labels).length;
+  lines.push('',`已标 ${done}/${DATA.length}`);
+  return lines.join('\n');
+}
+
+async function boot(){
+  canvas=document.getElementById('board');
+  ctx=canvas.getContext('2d');
+  build();
+
+  document.getElementById('customIn').addEventListener('keydown',e=>{
+    if(e.key!=='Enter')return;
+    const v=e.target.value.trim();
+    if(!v)return;
+    label(v);
+    e.target.value='';
+  });
+
+  document.getElementById('btnPrev').onclick=()=>{ if(idx>0){idx--;render();} };
+  document.getElementById('btnSkip').onclick=()=>{ if(idx<DATA.length-1){idx++;render();} };
+  document.getElementById('btnDone').onclick=()=>{
+    const box=document.getElementById('result');
+    box.classList.add('on');
+    document.getElementById('out').value=output();
+    document.getElementById('out').scrollIntoView({behavior:'smooth'});
+  };
+
+  // 标注结果存本地，刷新不丢
+  try{
+    const saved=localStorage.getItem('mate-labels');
+    if(saved)labels=JSON.parse(saved);
+  }catch(e){}
+
+  const origLabel=label;
+  label=function(v){
+    origLabel(v);
+    try{localStorage.setItem('mate-labels',JSON.stringify(labels));}catch(e){}
+  };
+
+  const res=await fetch('mate100.json');
+  DATA=await res.json();
+  render();
+}
+
+boot().catch(e=>{
+  document.body.innerHTML='<p style="color:#ff6b6b;padding:20px">加载数据失败：'+e.message+'</p>';
+});
+</script>
+</body>
+</html>

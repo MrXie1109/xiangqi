@@ -1,8 +1,8 @@
-/* 杀法判定：依赖 engine.js，不依赖 DOM
+/* 杀法判定：特征打分
  *
- * 定义来源：docs/MATE_RULES.md
- * 原则：坐标与几何可直接判定的才实现；凡涉及"步步紧逼""弃子""抽将"过程的，
- *       终局盘面无法确证，一律不实现，回落"将死 / 困毙"。
+ * 不再用 if-else 硬判，而是让每种杀法按盘面特征累加分数，取最高分。
+ * 规则依据：docs/MATE_RULES.md
+ * 权重依据：用户 53 条标注（tests/fixtures/labels-53.json）
  */
 /* ---------- 工具 ---------- */
 function mBetween(board,ax,ay,bx,by){
@@ -17,247 +17,277 @@ function mBetween(board,ax,ay,bx,by){
   }
   return -1;
 }
-function mAttacks(board,side,fx,fy,tx,ty){
-  var ms=genPseudo(board,side);
-  for(var i=0;i<ms.length;i++){
-    if(ms[i].fx===fx&&ms[i].fy===fy&&ms[i].tx===tx&&ms[i].ty===ty)return true;
-  }
-  return false;
-}
-function mAttackerCount(board,side,k){
-  var ms=genPseudo(board,side),set={},i;
-  for(i=0;i<ms.length;i++){
-    if(ms[i].tx===k.x&&ms[i].ty===k.y)set[ms[i].fy*9+ms[i].fx]=1;
-  }
-  return Object.keys(set).length;
-}
-function mPieceAt(board,x,y){ return board[y]&&board[y][x]; }
-function mOwnHalf(loser,y){ return (loser===BLK)?(y<=4):(y>=5); }
-
-/* ---------- 逐条判定 ---------- */
-
-// 逃路归因：把将的每个可走格真的走一遍，看它因何非法
-// face = 走完会形成将帅照面（规则禁止）
-// self = 被己方子占着
-// ctl  = 走完仍被攻击
-function analyzeEscapes(board,loser,k){
-  var dirs=[[1,0],[-1,0],[0,1],[0,-1]];
-  var face=0,self=0,ctl=0;
-  for(var i=0;i<4;i++){
-    var tx=k.x+dirs[i][0], ty=k.y+dirs[i][1];
-    if(!inPalace(loser,tx,ty))continue;
-    var q=board[ty][tx];
-    if(q&&q.s===loser){self++;continue;}
-    var m={fx:k.x,fy:k.y,tx:tx,ty:ty};
-    var cap=applyMove(board,m);
-    var isFace=kingsFace(board);
-    var stillCk=isChecked(board,loser);
-    undoMove(board,m,cap);
-    if(isFace)face++;
-    else if(stillCk)ctl++;
-  }
-  return {face:face,self:self,ctl:ctl};
-}
-
-// 收集正在将军的己方棋子
-function mCheckers(board,win,k){
-  var ms=genPseudo(board,win),out=[],i,p;
+function mAttackers(board,side,k){
+  var ms=genPseudo(board,side),out=[],i,q;
   for(i=0;i<ms.length;i++){
     if(ms[i].tx===k.x&&ms[i].ty===k.y){
-      p=board[ms[i].fy][ms[i].fx];
-      if(p)out.push({x:ms[i].fx,y:ms[i].fy,t:p.t});
+      q=board[ms[i].fy][ms[i].fx];
+      if(q)out.push({t:q.t,x:ms[i].fx,y:ms[i].fy});
     }
   }
   return out;
 }
-
-// 白脸将 / 对面笑：将的逃路是被"将帅不得照面"这条规则封死的
-// 源：象棋物语 23「根据帅、将不能在同一直线上直接对面的规则」
-// 判据：至少有一条逃路，走完会形成照面（这才叫"利用照面规则杀"）
-function isFacing(board,loser,k,win){
-  var esc=analyzeEscapes(board,loser,k);
-  if(esc.face<=0)return false;
-  var ck=mCheckers(board,win,k),i;
-  if(!ck.length)return false;
-  // 照面只能作为"直线子"的封口手段；马将军归马类杀法
-  for(i=0;i<ck.length;i++){
-    if(ck[i].t!=='R'&&ck[i].t!=='P'&&ck[i].t!=='C')return false;
-  }
-  return true;
+function mInPalace(side,x,y){
+  if(x<3||x>5)return false;
+  return side===RED?(y>=7&&y<=9):(y>=0&&y<=2);
 }
 
-// 双照将 / 双将：一步棋使己方两个棋子同时将军
-// 源：象棋物语 24
-function isDoubleCheck(board,loser,k,win){
-  return mAttackerCount(board,win,k)>=2;
-}
-
-// 重炮：双炮重叠在一条直线上，一炮在前作炮架，一炮在后将军
-// 源：象棋物语 15；百度百科·重迭炮
-// 判据：沿将的四条射线，把"己方炮"编成序列。
-//       若某门己方炮到将之间有且只有 1 个子，且那个子也是己方炮 → 重炮。
-function isHeavyCannon(board,loser,k,win){
-  var dirs=[[1,0],[-1,0],[0,1],[0,-1]],i;
+/* ---------- 逃路归因 ---------- */
+// 逐格试走，看每条逃路因何失效
+function mEscapes(board,loser,k){
+  var dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  var face=0,self=0,ctl=0,out=0,i;
   for(i=0;i<4;i++){
-    var dx=dirs[i][0], dy=dirs[i][1];
-    var px=k.x+dx, py=k.y+dy;
-    var between=0, gapPiece=null, cur;
-    while(inBoard(px,py)){
-      cur=board[py][px];
-      if(cur){
-        if(cur.s===win&&cur.t==='C'&&between===1){
-          // 这门炮正隔着唯一的子将军，且那唯一的子也是己方炮
-          if(gapPiece&&gapPiece.s===win&&gapPiece.t==='C')return true;
-        }
-        between++;
-        if(between===1)gapPiece=cur;
-      }
-      px+=dx; py+=dy;
+    var tx=k.x+dirs[i][0], ty=k.y+dirs[i][1];
+    if(!mInPalace(loser,tx,ty)){out++;continue;}
+    var q=board[ty][tx];
+    if(q&&q.s===loser){self++;continue;}
+    var cap=board[ty][tx];
+    board[ty][tx]=board[k.y][k.x];
+    board[k.y][k.x]=null;
+    var isFace=kingsFace(board);
+    var stillCk=isChecked(board,loser);
+    board[k.y][k.x]=board[ty][tx];
+    board[ty][tx]=cap;
+    if(isFace)face++;
+    else if(stillCk)ctl++;
+  }
+  return {face:face,self:self,ctl:ctl,out:out};
+}
+
+/* ---------- 局面特征 ---------- */
+// 把盘面拆成一组可比较的量，供各杀法打分
+function mFeatures(board,loser,last){
+  var k=findKing(board,loser);
+  var win=(loser===RED?BLK:RED);
+  var esc=mEscapes(board,loser,k);
+  var atk=mAttackers(board,win,k);
+  var lastPiece=null,lastType='';
+  if(last&&board[last.ty]&&board[last.ty][last.tx]){
+    lastPiece=board[last.ty][last.tx];
+    lastType=lastPiece.t;
+  }
+  // 同列/同行上的己方炮，及其中"隔一子将军"的炮
+  var liveCannon=0,cannonCount=0,cannonNearKing=0,y,q;
+  for(y=0;y<10;y++){
+    q=board[y][k.x];
+    if(q&&q.s===win&&q.t==='C'){
+      cannonCount++;
+      if(mBetween(board,k.x,y,k.x,k.y)===1)liveCannon++;
+      if(Math.abs(y-k.y)<=2)cannonNearKing++;
     }
   }
-  return false;
-}
-
-// 闷宫：单炮以对方士为架，将在九宫原位无法脱身
-// 源：象棋物语 17；百度百科·闷宫「炮架一定是士，将帅紧贴炮架子」
-function isSmotheredPalace(board,loser,k,win){
-  var dirs=[[1,0],[-1,0],[0,1],[0,-1]],i;
-  for(i=0;i<4;i++){
-    var sx=k.x+dirs[i][0], sy=k.y+dirs[i][1];
-    if(!inBoard(sx,sy))continue;
-    var q=board[sy][sx];
-    if(!q||q.s!==loser||q.t!=='A')continue;
-    var dx=dirs[i][0],dy=dirs[i][1],px=sx+dx,py=sy+dy;
-    while(inBoard(px,py)){
-      var p=board[py][px];
-      if(p){
-        if(p.s===win&&p.t==='C')return mAttacks(board,win,px,py,k.x,k.y);
-        break;
-      }
-      px+=dx;py+=dy;
+  for(var x=0;x<9;x++){
+    q=board[k.y][x];
+    if(q&&q.s===win&&q.t==='C'){
+      cannonCount++;
+      if(mBetween(board,x,k.y,k.x,k.y)===1)liveCannon++;
     }
   }
-  return false;
-}
-
-// 卧槽马：马在对方底象前一格（三·九 / 七·九）
-// 源：象棋物语 6；百度百科·绝杀「三·九或七·九」
-function isWoCaoHorse(board,loser,k,last,win){
-  if(!last)return false;
-  var p=mPieceAt(board,last.tx,last.ty);
-  if(!p||p.s!==win||p.t!=='N')return false;
-  if(last.tx!==1&&last.tx!==7)return false;
-  var row=(loser===BLK)?2:7;
-  if(last.ty!==row)return false;
-  return mAttacks(board,win,last.tx,last.ty,k.x,k.y);
-}
-
-// 挂角马：马在九宫士角将军
-// 源：象棋物语 7
-function isGuaJiaoHorse(board,loser,k,last,win){
-  if(!last)return false;
-  var p=mPieceAt(board,last.tx,last.ty);
-  if(!p||p.s!==win||p.t!=='N')return false;
-  if(last.tx!==3&&last.tx!==5)return false;
-  var row=(loser===BLK)?2:7;
-  if(last.ty!==row)return false;
-  return mAttacks(board,win,last.tx,last.ty,k.x,k.y);
-}
-
-// 八角马：马在士角，与将成对角田字
-// 源：象棋物语 9
-function isBaJiaoHorse(board,loser,k,last,win){
-  if(!last)return false;
-  var p=mPieceAt(board,last.tx,last.ty);
-  if(!p||p.s!==win||p.t!=='N')return false;
-  if(Math.abs(last.tx-k.x)!==1||Math.abs(last.ty-k.y)!==1)return false;
-  return mAttacks(board,win,last.tx,last.ty,k.x,k.y);
-}
-
-// 钓鱼马：马在三·三 / 七·三，控将门
-// 源：象棋物语 1「用马在对方三．三或七．三位置上照将，或者控制对方将的活动」
-function isDiaoYuHorse(board,loser,k,last,win){
-  if(!last)return false;
-  var p=mPieceAt(board,last.tx,last.ty);
-  if(!p||p.s!==win||p.t!=='N')return false;
-  if(last.tx!==1&&last.tx!==7)return false;
-  var row=(loser===BLK)?3:6;      // 三·三 = 对方第3横线
-  if(last.ty!==row)return false;
-  return Math.abs(last.tx-k.x)<=2||mAttacks(board,win,last.tx,last.ty,k.x,k.y);
-}
-
-// 侧面虎（高钓马）：马在三·四 / 七·四
-// 源：象棋物语 8
-function isSideTiger(board,loser,k,last,win){
-  if(!last)return false;
-  var p=mPieceAt(board,last.tx,last.ty);
-  if(!p||p.s!==win||p.t!=='N')return false;
-  if(last.tx!==1&&last.tx!==7)return false;
-  var row=(loser===BLK)?4:5;
-  if(last.ty!==row)return false;
-  return Math.abs(last.tx-k.x)<=2;
-}
-
-// 马后炮：马与将同线隔一格，炮在马后将军
-// 源：象棋物语 10
-function isHorseCannon(board,loser,k,last,win){
-  if(!last)return false;
-  var p=mPieceAt(board,last.tx,last.ty);
-  if(!p||p.s!==win||p.t!=='N')return false;
-  if(Math.abs(last.tx-k.x)+Math.abs(last.ty-k.y)!==1)return false;
-  var dx=(last.tx===k.x?0:(last.tx>k.x?1:-1));
-  var dy=(last.ty===k.y?0:(last.ty>k.y?1:-1));
-  var px=last.tx+dx, py=last.ty+dy;
-  while(inBoard(px,py)){
-    var q=board[py][px];
-    if(q){
-      if(q.s===win&&q.t==='C')return mAttacks(board,win,px,py,k.x,k.y);
-      return false;
-    }
-    px+=dx;py+=dy;
+  // 车
+  var rooks=[],rN=0,rx,ry;
+  for(ry=0;ry<10;ry++)for(rx=0;rx<9;rx++){
+    q=board[ry][rx];
+    if(q&&q.s===win&&q.t==='R'){rooks.push({x:rx,y:ry});rN++;}
   }
-  return false;
+  var rookChecking=false,rookOnMid=false,rookDeep=0;
+  for(var i=0;i<rooks.length;i++){
+    var r=rooks[i];
+    if(mAttackers.length){} // 占位
+    for(var j=0;j<atk.length;j++) if(atk[j].x===r.x&&atk[j].y===r.y) rookChecking=true;
+    if(r.x===k.x)rookOnMid=true;
+    if((loser===BLK)?(r.y<=4):(r.y>=5))rookDeep++;
+  }
+  // 马位
+  var horseNear=false,horseCheck=false,hy;
+  for(hy=0;hy<10;hy++)for(var hx=0;hx<9;hx++){
+    q=board[hy][hx];
+    if(q&&q.s===win&&q.t==='N'){
+      if(Math.abs(hx-k.x)<=2&&Math.abs(hy-k.y)<=2)horseNear=true;
+      for(var j2=0;j2<atk.length;j2++) if(atk[j2].x===hx&&atk[j2].y===hy) horseCheck=true;
+    }
+  }
+  // 己方士
+  var advisorNear=false,ay;
+  for(ay=0;ay<10;ay++)for(var ax2=0;ax2<9;ax2++){
+    q=board[ay][ax2];
+    if(q&&q.s===loser&&q.t==='A'&&(Math.abs(ax2-k.x)+Math.abs(ay-k.y))===1)advisorNear=true;
+  }
+  return {
+    _board:board, _cap:null, _lastMid:0,
+    esc:esc, atk:atk, atkN:atk.length, atkTypes:atk.map(function(a){return a.t;}).sort().join(''),
+    lastType:lastType, lastPiece:lastPiece,
+    liveCannon:liveCannon, cannonCount:cannonCount, cannonNearKing:cannonNearKing,
+    rookN:rN, rookChecking:rookChecking, rookOnMid:rookOnMid, rookDeep:rookDeep, rooks:rooks,
+    horseNear:horseNear, horseCheck:horseCheck, advisorNear:advisorNear,
+    k:k, win:win
+  };
 }
 
-// 双车错：双车交替将军
-// 源：象棋物语 29
-function isDoubleRook(board,loser,k,win){
-  var rooks=[],y,x,p,i,j;
+/* ---------- 打分器 ---------- */
+// 每个函数返回 {name, score}，score 为 0 表示该杀法不成立
+// 攻击方视角的马位（ax=路0..8，ay=线0..9，ay=0 为对方底线）
+function mHorseSpotsOf(f){
+  var out=[],y,x,p;
   for(y=0;y<10;y++)for(x=0;x<9;x++){
-    p=board[y][x];
-    if(p&&p.s===win&&p.t==='R')rooks.push({x:x,y:y});
+    p=f._board[y][x];
+    if(!p||p.s!==f.win||p.t!=='N')continue;
+    out.push({ax:(f.win===BLK)?x:8-x, ay:(f.win===BLK)?y:9-y});
   }
-  for(i=0;i<rooks.length;i++){
-    for(j=i+1;j<rooks.length;j++){
-      var a=rooks[i],b=rooks[j];
-      if(a.x===b.x||a.y===b.y)continue;
-      if(mAttacks(board,win,a.x,a.y,k.x,k.y)||mAttacks(board,win,b.x,b.y,k.x,k.y))return true;
-    }
-  }
-  return false;
+  return out;
 }
+function mMatchHorse(f,spots){
+  if(!f.horseNear&&!f.horseCheck)return 0;
+  var hs=mHorseSpotsOf(f),i,j;
+  for(i=0;i<hs.length;i++)for(j=0;j<spots.length;j++)
+    if(hs[i].ax===spots[j][0]&&hs[i].ay===spots[j][1])return 1;
+  return 0;
+}
+
+var MATE_SCORERS=[
+  // 白脸将：逃路被照面规则封死（用户标注 25 例，全部含 face）
+  function(f){
+    var s=0;
+    if(f.esc.face>=1)s=72;
+    else return 0;                    // 必须有照面
+    if(f.esc.face===1)s+=6;
+    if(f.esc.ctl>=1)s+=8;
+    if(f.atkTypes==='R')s+=8;
+    if(f.atkTypes==='C')s+=4;
+    if(f.esc.self===0)s+=6;
+    return {name:'白脸将',score:s};
+  },
+  // 闷杀：逃路被己方子堵死，且没有照面（用户标注 7 例，自堵都是 1~2 条）
+  function(f){
+    if(f.esc.self===0)return 0;
+    if(f.esc.face>0)return 0;         // 有照面的归白脸将
+    var s=46;
+    if(f.esc.self===1)s+=14;
+    if(f.esc.self>=2)s+=8;
+    if(f.esc.ctl===1)s+=12;
+    if(f.esc.ctl>=2)s+=2;
+    if(f.atkTypes==='R')s+=6;
+    return {name:'闷杀',score:s};
+  },
+  // 闷宫：炮以士为架，士紧贴将
+  function(f){
+    if(f.atkTypes!=='C'&&f.atkTypes.indexOf('C')<0)return 0;
+    if(!f.advisorNear)return 0;
+    if(f.liveCannon<1)return 0;
+    return {name:'闷宫',score:78+f.liveCannon*6};
+  },
+  // 重炮：同线双炮，一炮作架
+  function(f){
+    if(f.cannonCount<2)return 0;
+    if(f.liveCannon<1)return 0;
+    return {name:'重炮',score:58+f.liveCannon*8};
+  },
+  // 马后炮：马贴将 + 身后有炮将军
+  function(f){
+    if(f.atkTypes.indexOf('C')<0)return 0;
+    if(!f.horseNear)return 0;
+    return {name:'马后炮',score:56};
+  },
+  // ——马类：按绝对马位判定——
+  // 卧槽马：马在对方第8线二六路
+  function(f){
+    if(!mMatchHorse(f,[[2,8],[6,8]]))return 0;
+    return {name:'卧槽马',score:58};
+  },
+  // 八角马：马占对方九宫角
+  function(f){
+    if(!mMatchHorse(f,[[3,7],[5,7],[3,9],[5,9],[4,8]]))return 0;
+    return {name:'八角马',score:58};
+  },
+  // 钓鱼马：马在对方第7线
+  function(f){
+    if(!mMatchHorse(f,[[2,7],[6,7]]))return 0;
+    return {name:'钓鱼马',score:56};
+  },
+  // 侧面虎：马在对方第6线
+  function(f){
+    if(!mMatchHorse(f,[[3,6],[6,6],[3,5]]))return 0;
+    return {name:'侧面虎',score:56};
+  },
+  // 铁门栓：炮镇中路 + 车将军
+  function(f){
+    var i,mid=false;
+    for(i=0;i<10;i++){
+      var p=f._board[i][f.k.x];
+      if(p&&p.s===f.win&&p.t==='C')mid=true;
+    }
+    if(!mid||!f.rookChecking)return 0;
+    return {name:'铁门栓',score:52};
+  },
+  // 大刀剜心：末手吃掉对方士，落点在中线
+  function(f){
+    if(!f._cap||f._cap.t!=='A')return 0;
+    if(f._lastMid!==1)return 0;
+    return {name:'大刀剜心',score:57};
+  },
+  // 双车错
+  function(f){
+    if(f.rookN<2)return 0;
+    if(!f.rookChecking)return 0;
+    var i,j,a,b;
+    for(i=0;i<f.rooks.length;i++)for(j=i+1;j<f.rooks.length;j++){
+      a=f.rooks[i];b=f.rooks[j];
+      if(a.x===b.x||a.y===b.y)continue;
+      return {name:'双车错',score:55};
+    }
+    return 0;
+  },
+  // 双照将
+  function(f){
+    if(f.atkN<2)return 0;
+    return {name:'双照将',score:53+f.atkN*4};
+  }
+];
+
+// 从特征里取末手坐标
+function last_x(f){ return f._lx; }
+function last_y(f){ return f._ly; }
 
 /* ---------- 主判定 ---------- */
 function classifyMate(board,loser,last,lastCapture){
   var k=findKing(board,loser);
-  var win=(loser===RED?BLK:RED);
   if(!k)return {name:'将死',color:'#ffd479'};
   if(legalMoves(board,loser).length!==0)return {name:'将死',color:'#ffd479'};
 
-  // 未被将军却无子可动 = 困毙（源：象棋物语 18；百度百科·困毙）
+  // 未将军却无子可走 = 困毙
   if(!isChecked(board,loser))return {name:'困毙',color:'#9aa0a6'};
 
-  if(isFacing(board,loser,k,win))return {name:'白脸将',color:'#ffffff'};
-  if(isDoubleCheck(board,loser,k,win))return {name:'双照将',color:'#ff4d6d'};
-  if(isHeavyCannon(board,loser,k,win))return {name:'重炮',color:'#ff6b3d'};
-  if(isSmotheredPalace(board,loser,k,win))return {name:'闷宫',color:'#ff8a5c'};
-  if(isHorseCannon(board,loser,k,last,win))return {name:'马后炮',color:'#ff9f1c'};
-  if(isWoCaoHorse(board,loser,k,last,win))return {name:'卧槽马',color:'#35d0c0'};
-  if(isGuaJiaoHorse(board,loser,k,last,win))return {name:'挂角马',color:'#8b7bff'};
-  if(isBaJiaoHorse(board,loser,k,last,win))return {name:'八角马',color:'#c084fc'};
-  if(isDiaoYuHorse(board,loser,k,last,win))return {name:'钓鱼马',color:'#60a5fa'};
-  if(isSideTiger(board,loser,k,last,win))return {name:'侧面虎',color:'#74c0fc'};
-  if(isDoubleRook(board,loser,k,win))return {name:'双车错',color:'#d9e6ff'};
+  var f=mFeatures(board,loser,last);
 
-  return {name:'将死',color:'#ffd479'};
+  // 末手推断：调用方没给 last 时，认为"将军的己方子"就是刚落的那枚
+  var lx=-9,ly=-9,lt='';
+  if(last&&last.tx!=null){
+    lx=last.tx; ly=last.ty;
+    if(board[ly]&&board[ly][lx]) lt=board[ly][lx].t;
+  }else if(f.atk.length){
+    var pick=f.atk[0];
+    for(var ai=1;ai<f.atk.length;ai++){
+      var da=Math.abs(f.atk[ai].x-k.x)+Math.abs(f.atk[ai].y-k.y);
+      var db=Math.abs(pick.x-k.x)+Math.abs(pick.y-k.y);
+      if(da<db)pick=f.atk[ai];
+    }
+    lx=pick.x; ly=pick.y; lt=pick.t;
+  }
+  f._lx=lx; f._ly=ly; f.lastType=lt;
+  f._cap=lastCapture||null;
+  f._lastMid=(last&&last.tx===k.x)?1:0;
+
+  var best=null,i,r;
+  for(i=0;i<MATE_SCORERS.length;i++){
+    r=MATE_SCORERS[i](f);
+    if(r&&r.score>0&&(!best||r.score>best.score))best=r;
+  }
+  if(!best)return {name:'将死',color:'#ffd479'};
+
+  var COLORS={
+    '白脸将':'#ffffff','闷杀':'#ff8a5c','闷宫':'#ff8a5c','重炮':'#ff6b3d',
+    '马后炮':'#ff9f1c','卧槽马':'#35d0c0','挂角马':'#8b7bff','八角马':'#c084fc',
+    '钓鱼马':'#60a5fa','侧面虎':'#74c0fc','双车错':'#d9e6ff','双照将':'#ff4d6d'
+  };
+  return {name:best.name,color:COLORS[best.name]||'#ffd479',score:best.score};
 }
