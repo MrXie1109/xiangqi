@@ -50,19 +50,30 @@ function isDoubleCheck(board,loser,k,win){
   return mAttackerCount(board,win,k)>=2;
 }
 
-// 重炮：双炮重叠一条线，一炮作架、一炮将军
+// 重炮：双炮重叠在一条直线上，一炮在前作炮架，一炮在后将军
 // 源：象棋物语 15；百度百科·重迭炮
+// 判据：沿将的四条射线，把"己方炮"编成序列。
+//       若某门己方炮到将之间有且只有 1 个子，且那个子也是己方炮 → 重炮。
 function isHeavyCannon(board,loser,k,win){
-  // 从将往棋盘内部扫（避免将贴边时方向扫反）
-  var d=(k.y===0)?1:-1, seq=[], y=k.y+d, q;
-  while(y>=0&&y<10){
-    q=board[y][k.x];
-    if(q)seq.push(q);
-    y+=d;
+  var dirs=[[1,0],[-1,0],[0,1],[0,-1]],i;
+  for(i=0;i<4;i++){
+    var dx=dirs[i][0], dy=dirs[i][1];
+    var px=k.x+dx, py=k.y+dy;
+    var between=0, gapPiece=null, cur;
+    while(inBoard(px,py)){
+      cur=board[py][px];
+      if(cur){
+        if(cur.s===win&&cur.t==='C'&&between===1){
+          // 这门炮正隔着唯一的子将军，且那唯一的子也是己方炮
+          if(gapPiece&&gapPiece.s===win&&gapPiece.t==='C')return true;
+        }
+        between++;
+        if(between===1)gapPiece=cur;
+      }
+      px+=dx; py+=dy;
+    }
   }
-  // 跳过炮架（第一个子），其后必须连续两门己方炮
-  if(seq.length<3)return false;
-  return seq[1].s===win&&seq[1].t==='C'&&seq[2].s===win&&seq[2].t==='C';
+  return false;
 }
 
 // 闷宫：单炮以对方士为架，将在九宫原位无法脱身
