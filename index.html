@@ -22,6 +22,7 @@
     <button id="btnRand" class="ghost" title="换一个房间号">换</button>
     <button id="btnRed" class="sideBtn">执红</button>
     <button id="btnBlack" class="sideBtn">执黑</button>
+    <button id="btnChat" class="ghost" title="聊天">💬</button>
   </div>
 
   <div id="stat"><span class="dot" id="dot"></span><span id="statText"></span></div>
@@ -50,6 +51,14 @@
   </div>
 
   <div id="legend"><i class="lg g"></i>可吃<i class="lg y"></i>假根<i class="lg r"></i>危险</div>
+
+  <div id="chat" class="off">
+    <div id="chatLog"></div>
+    <div class="bar">
+      <input id="chatIn" maxlength="80" placeholder="说点什么" autocomplete="off">
+      <button id="chatSend">发送</button>
+    </div>
+  </div>
 
   <div id="log"></div>
 </div>

@@ -75,3 +75,15 @@
   #log{height:84px;overflow:auto;font-size:12px;color:#9d968a;background:#141310;
     border-radius:9px;padding:6px 9px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap}
   .tip{font-size:12px;color:#807a6e;margin:4px 0 0}
+
+/* 聊天 */
+#chat{display:none;flex-direction:column;gap:6px;margin:6px 0}
+#chat.on{display:flex}
+#chat.off{display:none}
+#chatLog{height:120px;overflow-y:auto;background:#141310;border:1px solid #26241f;
+  border-radius:9px;padding:7px 9px;font-size:13px;line-height:1.6}
+#chatLog .m{word-break:break-word}
+#chatLog .me{color:#c8a05a}
+#chatLog .op{color:#8fb2d9}
+#chatLog .sys{color:#7a746a;font-size:12px}
+#chatLog .who{opacity:.75;margin-right:4px}

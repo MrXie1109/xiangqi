@@ -754,6 +754,13 @@ function onWire(msg){
     else showAsk('对方请求重新开始',function(){resetGame();log('↺ 对方开新局');},function(){log('已拒绝重新开始');});
     return;
   }
+  if(msg.type==='chat'){
+    var txt=typeof msg.text==='string'?msg.text.slice(0,80):'';
+    if(!txt)return;
+    chatShow(msg.from===RED?'红':'黑',txt,'op');
+    if(mode==='mqtt'&&!el('chat').classList.contains('on')){chatUnread++;updateStatus();}
+    return;
+  }
   if(msg.type==='resign'){
     G.over=true;
     G.result=(msg.from===RED?'红方认输':'黑方认输')+'，'+((msg.from===RED?'黑方':'红方'))+'胜';
@@ -863,6 +870,42 @@ function disconnect(){
   linkState='';peerOnline=false;peerConflict=false;
 }
 
+/* ---------- 聊天 ---------- */
+var chatUnread=0;
+
+function chatShow(who,text,cls){
+  var box=el('chatLog');
+  var row=document.createElement('div');
+  row.className='m '+(cls||'');
+  if(who){
+    var w=document.createElement('span');
+    w.className='who'; w.textContent=who;
+    row.appendChild(w);
+  }
+  row.appendChild(document.createTextNode(text));
+  box.appendChild(row);
+  box.scrollTop=box.scrollHeight;
+  while(box.children.length>100)box.removeChild(box.firstChild);
+}
+
+function chatSend(){
+  var inp=el('chatIn');
+  var txt=(inp.value||'').trim().slice(0,80);
+  if(!txt)return;
+  if(mode!=='mqtt'){ chatShow('','联机模式才能聊天','sys'); return; }
+  if(!peerOnline){ chatShow('','对方不在线','sys'); return; }
+  send({v:1,type:'chat',room:room,from:mySide,text:txt,ts:Date.now()});
+  chatShow('我',txt,'me');
+  inp.value='';
+}
+
+function chatToggle(){
+  var box=el('chat');
+  var on=!box.classList.contains('on');
+  box.classList.toggle('on',on);
+  if(on){ chatUnread=0; updateStatus(); el('chatIn').focus(); }
+}
+
 /* ---------- 界面 ---------- */
 var pendingReq=null, askYes=null, askNo=null;
 
@@ -888,6 +931,8 @@ function updateStatus(){
   el('statText').textContent=t;
   el('dot').className='dot'+(((mode==='local')||linkState==='online')?' ok':'');
 
+  var cb=el('btnChat');
+  if(cb)cb.textContent=chatUnread>0?('💬'+chatUnread):'💬';
   el('btnResign').textContent=G.over?'新对局':'认输';
   el('btnDraw').disabled=G.over;
   el('btnUndoReq').disabled=G.over;
@@ -899,6 +944,9 @@ function setMode(m){
   mySide=null;peerConflict=false;flip=false;
   document.querySelectorAll('.sideBtn').forEach(function(b){b.classList.remove('on');});
   el('netRow').style.display=(m==='mqtt')?'flex':'none';
+  el('chat').classList.toggle('off',m!=='mqtt');
+  if(m!=='mqtt')el('chat').classList.remove('on');
+  chatUnread=0;
   el('actLocal').style.display=(m==='mqtt')?'none':'flex';
   el('actOnline').style.display=(m==='mqtt')?'flex':'none';
   hideAsk();
@@ -991,6 +1039,11 @@ function sendReq(type,label){
 
 /* ---------- 绑定 ---------- */
 el('mode').addEventListener('change',function(){setMode(this.value);});
+el('btnChat').addEventListener('click',chatToggle);
+el('chatSend').addEventListener('click',chatSend);
+el('chatIn').addEventListener('keydown',function(e){
+  if(e.key==='Enter'){ e.preventDefault(); chatSend(); }
+});
 
 el('btnRand').addEventListener('click',function(){
   el('room').value=randRoom();
