@@ -226,139 +226,6 @@ function guardTargets(board,side){
   return set;
 }
 
-// 判定杀法名：先看逃路为何断，再验证关键子是否必要
-// 逐条模拟将的逃路，归类失败原因：照面 / 自堵 / 仍被攻击
-function analyzeEscapes(board,loser,k){
-  var dirs=[[1,0],[-1,0],[0,1],[0,-1]];
-  var face=0,self=0,ctl=0,free=0,cells=[];
-  for(var i=0;i<4;i++){
-    var tx=k.x+dirs[i][0], ty=k.y+dirs[i][1];
-    if(!inPalace(loser,tx,ty))continue;
-    cells.push({x:tx,y:ty});
-    var q=board[ty][tx];
-    if(q&&q.s===loser){self++;continue;}
-    var m={fx:k.x,fy:k.y,tx:tx,ty:ty};
-    var cap=applyMove(board,m);
-    var faceNow=kingsFace(board);
-    var stillCk=isChecked(board,loser);
-    undoMove(board,m,cap);
-    if(faceNow)face++;
-    else if(stillCk)ctl++;
-    else free++;
-  }
-  return {face:face,self:self,ctl:ctl,free:free,cells:cells};
-}
-
-function cloneBoard(b){
-  var o=[],i;
-  for(i=0;i<10;i++)o.push(b[i].slice());
-  return o;
-}
-
-// 反事实检验：移除关键棋子后，被将死方是否恢复合法走法
-function probeEscape(board,loser,mutate){
-  var b=cloneBoard(board);
-  mutate(b);
-  return legalMoves(b,loser).length>0;
-}
-
-function killAt(x,y){ return function(b){ b[y][x]=null; }; }
-
-function attacksSquare(board,side,fx,fy,tx,ty){
-  var ms=genPseudo(board,side),i;
-  for(i=0;i<ms.length;i++){
-    if(ms[i].fx===fx&&ms[i].fy===fy&&ms[i].tx===tx&&ms[i].ty===ty)return true;
-  }
-  return false;
-}
-
-function classifyMate(board,loser,last){
-  var k=findKing(board,loser);
-  var win=(loser===RED?BLK:RED);
-  if(!k)return {name:'绝杀',color:'#ffd479'};
-
-  var lp=(last&&board[last.ty])?board[last.ty][last.tx]:null;
-  var esc=analyzeEscapes(board,loser,k);
-  var y,x,p,q,a,b,yy,i;
-
-  // 1. 对面笑：有逃路被照面封死，且拿掉对方的帅，将就能活
-  if(esc.face>0&&probeEscape(board,loser,function(bb){
-      var rk=findKing(bb,win);
-      if(rk)bb[rk.y][rk.x]=null;
-    }))
-    return {name:'对面笑',color:'#ffffff'};
-
-  // 2. 重炮：同列两炮、有一门真能打到将，且拿掉一门炮将就活
-  var colC=0, liveC=0, cannonCells=[];
-  for(y=0;y<10;y++){
-    q=board[y][k.x];
-    if(q&&q.s===win&&q.t==='C'){
-      colC++;
-      cannonCells.push({x:k.x,y:y});
-      var between=0;
-      a=Math.min(y,k.y);b=Math.max(y,k.y);
-      for(yy=a+1;yy<b;yy++) if(board[yy][k.x]) between++;
-      if(between===1) liveC++;
-    }
-  }
-  if(colC>=2&&liveC>=1){
-    for(i=0;i<cannonCells.length;i++){
-      if(probeEscape(board,loser,killAt(cannonCells[i].x,cannonCells[i].y)))
-        return {name:'重炮',color:'#ff6b3d'};
-    }
-  }
-
-  // 3. 马系：末手是马，拿掉这匹马将就有救
-  if(lp&&lp.s===win&&lp.t==='N'&&
-     probeEscape(board,loser,killAt(last.tx,last.ty))){
-    var horseChecks=attacksSquare(board,win,last.tx,last.ty,k.x,k.y);
-    if(!horseChecks&&liveC>=1)return {name:'马后炮',color:'#ff9f1c'};
-    var deep=(loser===BLK)?(last.ty<=2):(last.ty>=7);
-    if(deep&&(last.tx===3||last.tx===5))return {name:'挂角马',color:'#8b7bff'};
-    if(deep&&(last.tx===1||last.tx===7))return {name:'卧槽马',color:'#35d0c0'};
-  }
-
-  // 4. 铁门栓：有车锁在将门（中路第4列），拿掉它将就活
-  var rooks=[];
-  for(y=0;y<10;y++)for(x=0;x<9;x++){
-    p=board[y][x];
-    if(p&&p.s===win&&p.t==='R'&&(loser===BLK?(y<=4):(y>=5))) rooks.push({x:x,y:y});
-  }
-  for(i=0;i<rooks.length;i++){
-    if(rooks[i].x===4&&attacksSquare(board,win,rooks[i].x,rooks[i].y,k.x,k.y))
-      return {name:'铁门栓',color:'#ffd479'};
-  }
-
-  // 5. 双车错：两车不共线（一行一纵），各自拿掉都将活命
-  if(rooks.length>=2){
-    var m,n,ra,rb;
-    for(m=0;m<rooks.length;m++){
-      for(n=m+1;n<rooks.length;n++){
-        ra=rooks[m];rb=rooks[n];
-        if(ra.x===rb.x||ra.y===rb.y)continue;
-        if(probeEscape(board,loser,killAt(ra.x,ra.y))&&
-           probeEscape(board,loser,killAt(rb.x,rb.y)))
-          return {name:'双车错',color:'#d9e6ff'};
-      }
-    }
-  }
-
-  // 6. 小鬼坐龙庭：兵卒入宫，拿掉它将就活
-  if(lp&&lp.s===win&&lp.t==='P'&&inPalace(loser,last.tx,last.ty)&&
-     probeEscape(board,loser,killAt(last.tx,last.ty)))
-    return {name:'小鬼坐龙庭',color:'#7ee08a'};
-
-  // 7. 闷杀：某条逃路被自家子堵死，且挪走它，将就有救
-  for(i=0;i<esc.cells.length;i++){
-    var c=esc.cells[i];
-    var occ=board[c.y][c.x];
-    if(occ&&occ.s===loser&&probeEscape(board,loser,killAt(c.x,c.y)))
-      return {name:'闷杀',color:'#ff8a5c'};
-  }
-
-  return {name:'绝杀',color:'#ffd479'};
-}
-
 
 /* ---------- 重复局面与长打裁决 ---------- */
 // 局面标识：盘面 + 轮走方
@@ -411,4 +278,12 @@ function repetitionVerdict(hist){
   if(redAttack&&!blkAttack)return {result:'红方长打，黑方胜',loser:RED,name:'长打判负'};
   if(blkAttack&&!redAttack)return {result:'黑方长打，红方胜',loser:BLK,name:'长打判负'};
   return {result:'三次重复，和棋',loser:null,name:'循环和棋'};
+}
+
+// 子力估值（用于"捉"的判定）
+var PIECE_VAL={K:1000,R:9,C:4.5,N:4,B:2,A:2,P:1};
+function pieceVal(p,y){
+  if(!p)return 0;
+  if(p.t==='P')return (p.s===RED)?(y<=4?2:1):(y>=5?2:1);
+  return PIECE_VAL[p.t];
 }

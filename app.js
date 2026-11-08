@@ -598,7 +598,7 @@ function commitMove(m,opts){
     G.over=true;
     G.result=(side===RED?'红方胜':'黑方胜')+(chk?'（将死）':'（困毙）');
     kp=findKing(G.board,opp);
-    cls=chk?classifyMate(G.board,opp,m):{name:'困毙',color:'#9aa0a6'};
+    cls=chk?classifyMate(G.board,opp,m,cap):{name:'困毙',color:'#9aa0a6'};
   }
 
   if(!G.over){
@@ -684,17 +684,24 @@ function onWire(msg){
   if(msg.from===mySide)return;
 
   if(msg.type==='state'){
+    var raw=msg.moves||[];
+    if(raw.length<G.moves.length)return;   // 只准前进，不准倒退清盘
+    if(raw.length>420)return;              // 异常长度直接丢弃
+    var pi,cnt=G.moves.length;
+    for(pi=0;pi<cnt;pi++){                 // 只准往后接，不准改写已有棋谱
+      if(raw[pi]!==G.moves[pi])return;
+    }
     if(msg.ver<=G.moves.length)return;
     var prevLen=G.moves.length;
-    var nc=(msg.moves||[]).length;
+    var nc=raw.length;
     var lm=null, eat=null;
     if(nc===prevLen+1){
-      lm=codeToMove(msg.moves[nc-1]);
+      lm=codeToMove(raw[nc-1]);
       if(lm)eat=G.board[lm.ty][lm.tx]||null;
     }
-    var r=replay(msg.moves||[]);
+    var r=replay(raw);
     if(r.ok){
-      G.board=r.board;G.turn=r.turn;G.moves=(msg.moves||[]).slice();
+      G.board=r.board;G.turn=r.turn;G.moves=raw.slice();
       G.last=G.moves.length?codeToMove(G.moves[G.moves.length-1]):null;
       G.over=false;G.result='';
       var opp=G.turn, kp2=null, cls2=null;
@@ -703,7 +710,7 @@ function onWire(msg){
         kp2=findKing(G.board,opp);
         var chk2=isChecked(G.board,opp);
         G.result=((opp===RED?'黑方胜':'红方胜'))+(chk2?'（将死）':'（困毙）');
-        cls2=chk2?classifyMate(G.board,opp,G.last):{name:'困毙',color:'#9aa0a6'};
+        cls2=chk2?classifyMate(G.board,opp,G.last,eat):{name:'困毙',color:'#9aa0a6'};
       }
       sel=null;hints=[];
       var after=function(){
@@ -742,7 +749,11 @@ function onWire(msg){
     return;
   }
   if(msg.type==='sync'){sendState();return;}
-  if(msg.type==='reset'){resetGame();log('↺ 对方开新局');return;}
+  if(msg.type==='reset'){
+    if(G.over||G.moves.length===0){resetGame();log('↺ 对方开新局');}
+    else showAsk('对方请求重新开始',function(){resetGame();log('↺ 对方开新局');},function(){log('已拒绝重新开始');});
+    return;
+  }
   if(msg.type==='resign'){
     G.over=true;
     G.result=(msg.from===RED?'红方认输':'黑方认输')+'，'+((msg.from===RED?'黑方':'红方'))+'胜';
@@ -758,7 +769,10 @@ function onWire(msg){
     });
     return;
   }
-  if(msg.type==='draw-ok'){pendingReq=null;finishDraw();log('对方同意求和');return;}
+  if(msg.type==='draw-ok'){
+    if(pendingReq!=='draw-req'){log('忽略未请求的和棋');return;}
+    pendingReq=null;finishDraw();log('对方同意求和');return;
+  }
   if(msg.type==='draw-no'){pendingReq=null;log('对方拒绝求和');return;}
   if(msg.type==='undo-req'){
     if(!G.moves.length)return;
@@ -772,7 +786,10 @@ function onWire(msg){
     });
     return;
   }
-  if(msg.type==='undo-ok'){pendingReq=null;applyUndoList(msg.moves||[]);log('对方同意悔棋');return;}
+  if(msg.type==='undo-ok'){
+    if(pendingReq!=='undo-req'){log('忽略未请求的悔棋');return;}
+    pendingReq=null;applyUndoList(msg.moves||[]);log('对方同意悔棋');return;
+  }
   if(msg.type==='undo-no'){pendingReq=null;log('对方拒绝悔棋');return;}
 }
 
